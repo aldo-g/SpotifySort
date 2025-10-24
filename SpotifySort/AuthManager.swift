@@ -28,8 +28,12 @@ final class AuthManager: NSObject, ObservableObject {
             URLQueryItem(name: "redirect_uri", value: REDIRECT_URI),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "code_challenge", value: codeChallenge),
-            URLQueryItem(name: "scope",
-                         value: "playlist-read-private playlist-modify-public playlist-modify-private user-read-email")
+            URLQueryItem(
+                name: "scope",
+                value: """
+                playlist-read-private playlist-modify-public playlist-modify-private user-read-email user-library-read user-library-modify
+                """
+            )
         ]
 
         guard let url = comps.url else { return }
