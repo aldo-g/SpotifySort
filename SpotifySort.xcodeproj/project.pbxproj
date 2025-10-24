@@ -11,6 +11,12 @@
 		40273C9A2EA5C12300C63E94 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273C992EA5C12300C63E94 /* ContentView.swift */; };
 		40273C9C2EA5C12500C63E94 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 40273C9B2EA5C12500C63E94 /* Assets.xcassets */; };
 		40273CA02EA5C12500C63E94 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 40273C9F2EA5C12500C63E94 /* Preview Assets.xcassets */; };
+		40273CA82EA8CB0C00C63E94 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273CA72EA8CB0C00C63E94 /* AuthManager.swift */; };
+		40273CAA2EA8CB1F00C63E94 /* SpotifyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273CA92EA8CB1F00C63E94 /* SpotifyAPI.swift */; };
+		40273CAC2EA8CB2B00C63E94 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273CAB2EA8CB2B00C63E94 /* Models.swift */; };
+		40273CAE2EA8CBEE00C63E94 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273CAD2EA8CBEE00C63E94 /* Views.swift */; };
+		40273CB02EA8CD6000C63E94 /* SwipeCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273CAF2EA8CD6000C63E94 /* SwipeCard.swift */; };
+		40273CB22EA8CF2500C63E94 /* RemoteImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40273CB12EA8CF2500C63E94 /* RemoteImage.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -20,6 +26,13 @@
 		40273C9B2EA5C12500C63E94 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		40273C9D2EA5C12500C63E94 /* SpotifySort.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SpotifySort.entitlements; sourceTree = "<group>"; };
 		40273C9F2EA5C12500C63E94 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		40273CA62EA87ED300C63E94 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		40273CA72EA8CB0C00C63E94 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		40273CA92EA8CB1F00C63E94 /* SpotifyAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyAPI.swift; sourceTree = "<group>"; };
+		40273CAB2EA8CB2B00C63E94 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		40273CAD2EA8CBEE00C63E94 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		40273CAF2EA8CD6000C63E94 /* SwipeCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeCard.swift; sourceTree = "<group>"; };
+		40273CB12EA8CF2500C63E94 /* RemoteImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteImage.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,11 +65,18 @@
 		40273C962EA5C12300C63E94 /* SpotifySort */ = {
 			isa = PBXGroup;
 			children = (
+				40273CA62EA87ED300C63E94 /* Info.plist */,
+				40273CA72EA8CB0C00C63E94 /* AuthManager.swift */,
 				40273C972EA5C12300C63E94 /* SpotifySortApp.swift */,
 				40273C992EA5C12300C63E94 /* ContentView.swift */,
+				40273CAD2EA8CBEE00C63E94 /* Views.swift */,
 				40273C9B2EA5C12500C63E94 /* Assets.xcassets */,
 				40273C9D2EA5C12500C63E94 /* SpotifySort.entitlements */,
 				40273C9E2EA5C12500C63E94 /* Preview Content */,
+				40273CA92EA8CB1F00C63E94 /* SpotifyAPI.swift */,
+				40273CAB2EA8CB2B00C63E94 /* Models.swift */,
+				40273CAF2EA8CD6000C63E94 /* SwipeCard.swift */,
+				40273CB12EA8CF2500C63E94 /* RemoteImage.swift */,
 			);
 			path = SpotifySort;
 			sourceTree = "<group>";
@@ -140,7 +160,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				40273C9A2EA5C12300C63E94 /* ContentView.swift in Sources */,
+				40273CA82EA8CB0C00C63E94 /* AuthManager.swift in Sources */,
+				40273CAE2EA8CBEE00C63E94 /* Views.swift in Sources */,
+				40273CB22EA8CF2500C63E94 /* RemoteImage.swift in Sources */,
 				40273C982EA5C12300C63E94 /* SpotifySortApp.swift in Sources */,
+				40273CB02EA8CD6000C63E94 /* SwipeCard.swift in Sources */,
+				40273CAA2EA8CB1F00C63E94 /* SpotifyAPI.swift in Sources */,
+				40273CAC2EA8CB2B00C63E94 /* Models.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,6 +300,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SpotifySort/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -312,6 +339,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SpotifySort/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

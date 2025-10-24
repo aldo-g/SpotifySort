@@ -1,17 +1,18 @@
-//
-//  SpotifySortApp.swift
-//  SpotifySort
-//
-//  Created by Ali on 20/10/2025.
-//
-
 import SwiftUI
 
 @main
 struct SpotifySortApp: App {
+    @StateObject private var auth = AuthManager()
+    @StateObject private var api = SpotifyAPI()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(auth)
+                .environmentObject(api)
+                .onOpenURL { url in
+                    auth.handleRedirect(url: url)
+                }
         }
     }
 }
