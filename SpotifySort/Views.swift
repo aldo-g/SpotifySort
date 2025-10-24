@@ -172,6 +172,9 @@ struct SortView: View {
     @State private var isLoading = true
     @State private var showCommit = false
 
+    // Duplicate tracking
+    @State private var duplicateIDs: Set<String> = []
+
     private let pageSize = 20
 
     private var listKey: String { "playlist:\(playlist.id)" }
@@ -197,7 +200,12 @@ struct SortView: View {
                 ZStack {
                     ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
                         if idx >= topIndex, let tr = item.track {
-                            SwipeCard(track: tr) { dir in
+                            SwipeCard(
+                                track: tr,
+                                addedAt: item.added_at,
+                                addedBy: item.added_by?.id,
+                                isDuplicate: isDuplicate(trackID: tr.id)
+                            ) { dir in
                                 onSwipe(direction: dir, item: item)
                             }
                             .padding(.horizontal, 16)
@@ -221,7 +229,9 @@ struct SortView: View {
             }
         }
         .navigationTitle(playlist.name)
-        .onChange(of: topIndex) { _ in Task { await topUpIfNeeded() } }
+        .onChange(of: topIndex) {
+            Task { await topUpIfNeeded() }
+        }
         .confirmationDialog("Apply removals to Spotify?",
                             isPresented: $showCommit, titleVisibility: .visible) {
             Button("Remove \(removedURIs.count) tracks", role: .destructive) {
@@ -239,6 +249,8 @@ struct SortView: View {
                 auth: auth,
                 reviewedURIs: reviewedSet
             )
+            recomputeDuplicates()
+
             deck.removeAll()
             nextCursor = 0
             try? await loadNextPage()
@@ -247,6 +259,21 @@ struct SortView: View {
             print(error)
             isLoading = false
         }
+    }
+
+    private func recomputeDuplicates() {
+        var counts: [String: Int] = [:]
+        for it in orderedAll {
+            if let id = it.track?.id {
+                counts[id, default: 0] += 1
+            }
+        }
+        duplicateIDs = Set(counts.filter { $0.value > 1 }.map { $0.key })
+    }
+
+    private func isDuplicate(trackID: String?) -> Bool {
+        guard let id = trackID else { return false }
+        return duplicateIDs.contains(id)
     }
 
     private func loadNextPage() async throws {
@@ -341,7 +368,13 @@ struct SortLikedView: View {
                 ZStack {
                     ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
                         if idx >= topIndex, let tr = item.track {
-                            SwipeCard(track: tr) { dir in
+                            // For Liked Songs, duplicates are not meaningful; pass false.
+                            SwipeCard(
+                                track: tr,
+                                addedAt: item.added_at,
+                                addedBy: item.added_by?.id,
+                                isDuplicate: false
+                            ) { dir in
                                 onSwipe(direction: dir, item: item)
                             }
                             .padding(.horizontal, 16)
@@ -365,7 +398,9 @@ struct SortLikedView: View {
             }
         }
         .navigationTitle("Liked Songs")
-        .onChange(of: topIndex) { _ in Task { await topUpIfNeeded() } }
+        .onChange(of: topIndex) {
+            Task { await topUpIfNeeded() }
+        }
         .confirmationDialog("Remove from Liked Songs?",
                             isPresented: $showCommit, titleVisibility: .visible) {
             Button("Unsave \(toUnsaveIDs.count) tracks", role: .destructive) {

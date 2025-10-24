@@ -5,6 +5,9 @@ final class SpotifyAPI: ObservableObject {
     @Published var user: SpotifyUser?
     @Published var playlists: [Playlist] = []
 
+    // ✅ Add this property so SwipeCard can store Deezer/Spotify preview URLs
+    @Published var previewMap: [String: String] = [:]
+
     // MARK: - HTTP helper
 
     func authorizedRequest(
@@ -51,19 +54,16 @@ final class SpotifyAPI: ObservableObject {
                 break
             }
         }
-
-        // Filter out empty playlists
         playlists = result.filter { $0.tracks.total > 0 }
     }
 
-    // MARK: - Playlist Tracks (full fetch, ordered)
+    // MARK: - Playlist Tracks
 
     func loadAllPlaylistTracksOrdered(
         playlistID: String,
         auth: AuthManager,
         reviewedURIs: Set<String>
     ) async throws -> [PlaylistTrack] {
-
         var url = "https://api.spotify.com/v1/playlists/\(playlistID)/tracks?limit=100&market=from_token"
         var all: [PlaylistTrack] = []
 
@@ -74,7 +74,7 @@ final class SpotifyAPI: ObservableObject {
 
             let batch = page.items.compactMap { item -> PlaylistTrack? in
                 guard var tr = item.track else { return nil }
-                if let t = tr.type, t != "track" { return nil }   // skip podcasts/episodes
+                if let t = tr.type, t != "track" { return nil }
                 if tr.uri == nil, let id = tr.id { tr.uri = "spotify:track:\(id)" }
                 var copy = item
                 copy.track = tr
@@ -89,7 +89,6 @@ final class SpotifyAPI: ObservableObject {
             }
         }
 
-        // Shuffle unreviewed first, then reviewed
         let (unreviewed, reviewed) = all.partitioned {
             guard let uri = $0.track?.uri else { return false }
             return !reviewedURIs.contains(uri)
@@ -97,13 +96,12 @@ final class SpotifyAPI: ObservableObject {
         return unreviewed.shuffled() + reviewed.shuffled()
     }
 
-    // MARK: - Saved Tracks (Liked Songs full fetch)
+    // MARK: - Saved Tracks
 
     func loadAllSavedTracksOrdered(
         auth: AuthManager,
         reviewedIDs: Set<String>
     ) async throws -> [PlaylistTrack] {
-
         var url = "https://api.spotify.com/v1/me/tracks?limit=50&market=from_token"
         var all: [PlaylistTrack] = []
 
@@ -124,9 +122,7 @@ final class SpotifyAPI: ObservableObject {
             all.append(contentsOf: batch)
             if let next = page.next, !next.isEmpty {
                 url = next + "&market=from_token"
-            } else {
-                break
-            }
+            } else { break }
         }
 
         let (unreviewed, reviewed) = all.partitioned {
@@ -136,13 +132,12 @@ final class SpotifyAPI: ObservableObject {
         return unreviewed.shuffled() + reviewed.shuffled()
     }
 
-    // MARK: - Paged fetch for Liked Songs (fast incremental loading)
+    // MARK: - Paged fetch for Liked Songs
 
     func fetchSavedTracksPage(
         auth: AuthManager,
         nextURL: String? = nil
     ) async throws -> (items: [PlaylistTrack], next: String?) {
-
         let url = nextURL ?? "https://api.spotify.com/v1/me/tracks?limit=50&market=from_token"
         guard let req = authorizedRequest(url, auth: auth)
         else { return ([], nil) }
@@ -163,13 +158,8 @@ final class SpotifyAPI: ObservableObject {
 
     // MARK: - Mutations
 
-    func batchRemoveTracks(
-        playlistID: String,
-        uris: [String],
-        auth: AuthManager
-    ) async throws {
+    func batchRemoveTracks(playlistID: String, uris: [String], auth: AuthManager) async throws {
         guard !uris.isEmpty else { return }
-
         for chunk in uris.chunked(into: 90) {
             let body = ["tracks": chunk.map { ["uri": $0] }]
             let data = try JSONSerialization.data(withJSONObject: body)
@@ -183,22 +173,16 @@ final class SpotifyAPI: ObservableObject {
         }
     }
 
-    func batchUnsaveTracks(
-        trackIDs: [String],
-        auth: AuthManager
-    ) async throws {
+    func batchUnsaveTracks(trackIDs: [String], auth: AuthManager) async throws {
         guard !trackIDs.isEmpty else { return }
-
         for chunk in trackIDs.chunked(into: 50) {
             let ids = chunk.joined(separator: ",")
             guard var comps = URLComponents(string: "https://api.spotify.com/v1/me/tracks")
             else { continue }
-
             comps.queryItems = [URLQueryItem(name: "ids", value: ids)]
             guard let url = comps.url,
                   var req = authorizedRequest(url.absoluteString, auth: auth, method: "DELETE")
             else { continue }
-
             req.setValue(nil, forHTTPHeaderField: "Content-Type")
             _ = try await URLSession.shared.data(for: req)
         }
@@ -219,11 +203,7 @@ private extension Array {
         var first: [Element] = []
         var second: [Element] = []
         for el in self {
-            if isFirst(el) {
-                first.append(el)
-            } else {
-                second.append(el)
-            }
+            if isFirst(el) { first.append(el) } else { second.append(el) }
         }
         return (first, second)
     }
