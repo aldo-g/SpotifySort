@@ -108,12 +108,8 @@ struct PlaylistPickerView: View {
                 SortView(playlist: pl)
             }
             .navigationTitle("Your Playlists")
-            .overlay {
-                if isLoading { ProgressView() }
-            }
-            .task {
-                await loadData()
-            }
+            .overlay { if isLoading { ProgressView() } }
+            .task { await loadData() }
         }
     }
 
@@ -131,8 +127,8 @@ struct PlaylistPickerView: View {
         defer { isLoading = false }
 
         try? await api.loadMe(auth: auth)
-        try? await api.loadPlaylists(auth: auth)     // fills api.playlists
-        await fetchLikedCount()                       // lightweight count
+        try? await api.loadPlaylists(auth: auth)
+        await fetchLikedCount()
     }
 
     /// Lightweight: hits /v1/me/tracks?limit=1 and reads "total"
@@ -229,7 +225,7 @@ struct SortView: View {
         }
     }
 
-    func load() async {
+    private func load() async {
         do {
             try await api.loadTracksPaged(playlistID: playlist.id, auth: auth) { newItems in
                 if isLoading { isLoading = false }   // drop spinner on first page
@@ -241,14 +237,14 @@ struct SortView: View {
         }
     }
 
-    func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
+    private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
         guard let uri = item.track?.uri else { return }
         if direction == .left { removedURIs.append(uri) } else { keepURIs.append(uri) }
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
-    func undo() {
+    private func undo() {
         guard topIndex > 0 else { return }
         topIndex -= 1
         if let uri = deck[topIndex].track?.uri {
@@ -257,9 +253,9 @@ struct SortView: View {
         }
     }
 
-    func skip() { topIndex += 1 }
+    private func skip() { topIndex += 1 }
 
-    func commitRemovals() async {
+    private func commitRemovals() async {
         do {
             try await api.batchRemoveTracks(playlistID: playlist.id, uris: removedURIs, auth: auth)
             removedURIs.removeAll()
@@ -267,7 +263,7 @@ struct SortView: View {
     }
 }
 
-// MARK: - Sort Liked Songs (Saved Tracks, PAGED)
+// MARK: - Sort Liked Songs (Saved Tracks, infinite paging @ 20)
 
 struct SortLikedView: View {
     @EnvironmentObject var auth: AuthManager
@@ -278,19 +274,24 @@ struct SortLikedView: View {
     @State private var keepIDs: [String] = []
     @State private var topIndex: Int = 0
     @State private var isLoading = true
+    @State private var isLoadingMore = false
     @State private var showCommit = false
 
     var body: some View {
         VStack(spacing: 12) {
             if isLoading {
-                ProgressView().task { await load() }
+                ProgressView().task { await initialLoad() }
             } else if topIndex >= deck.count {
-                VStack(spacing: 16) {
-                    Image(systemName: "heart.slash.fill").font(.system(size: 40))
-                    Text("All liked tracks reviewed").font(.title3).bold()
-                    Button("Unsave \(toUnsaveIDs.count) tracks") { showCommit = true }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(toUnsaveIDs.isEmpty)
+                if api.hasMoreSaved {
+                    ProgressView("Loading more…").task { await loadMoreIfNeeded(force: true) }
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: "heart.slash.fill").font(.system(size: 40))
+                        Text("All liked tracks reviewed").font(.title3).bold()
+                        Button("Unsave \(toUnsaveIDs.count) tracks") { showCommit = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(toUnsaveIDs.isEmpty)
+                    }
                 }
             } else {
                 ZStack {
@@ -329,27 +330,38 @@ struct SortLikedView: View {
         }
     }
 
-    func load() async {
-        do {
-            // PAGED: stream pages of 50 saved tracks
-            try await api.loadSavedTracksPaged(auth: auth) { newItems in
-                if isLoading { isLoading = false }   // drop spinner on first page
-                deck.append(contentsOf: newItems)
-            }
-        } catch {
-            print(error)
-            isLoading = false
-        }
+    // MARK: Loading
+
+    private func initialLoad() async {
+        api.resetSavedPager(limit: 20)               // page size here
+        await loadMoreIfNeeded(force: true)
+        isLoading = false
     }
 
-    func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
-        guard let id = item.track?.id else { return }
-        if direction == .left { toUnsaveIDs.append(id) } else { keepIDs.append(id) }
+    private func loadMoreIfNeeded(force: Bool = false) async {
+        guard !isLoadingMore else { return }
+        let remaining = deck.count - topIndex
+        guard force || remaining <= 5 else { return }   // prefetch threshold
+
+        isLoadingMore = true
+        if let newItems = try? await api.fetchNextSavedPage(auth: auth), !newItems.isEmpty {
+            deck.append(contentsOf: newItems)
+        }
+        isLoadingMore = false
+    }
+
+    // MARK: Swipe actions
+
+    private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
+        if let id = item.track?.id {
+            if direction == .left { toUnsaveIDs.append(id) } else { keepIDs.append(id) }
+        }
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task { await loadMoreIfNeeded() } // top-up when running low
     }
 
-    func undo() {
+    private func undo() {
         guard topIndex > 0 else { return }
         topIndex -= 1
         if let id = deck[topIndex].track?.id {
@@ -358,9 +370,14 @@ struct SortLikedView: View {
         }
     }
 
-    func skip() { topIndex += 1 }
+    private func skip() {
+        topIndex += 1
+        Task { await loadMoreIfNeeded() }
+    }
 
-    func commit() async {
+    // MARK: Mutations
+
+    private func commit() async {
         do {
             try await api.batchUnsaveTracks(trackIDs: toUnsaveIDs, auth: auth)
             toUnsaveIDs.removeAll()
