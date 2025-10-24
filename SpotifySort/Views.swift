@@ -42,7 +42,7 @@ struct LoginView: View {
     }
 }
 
-// MARK: - Picker (Owned + Liked pinned at top)
+// MARK: - Picker
 
 struct PlaylistPickerView: View {
     @EnvironmentObject var auth: AuthManager
@@ -52,18 +52,15 @@ struct PlaylistPickerView: View {
     @State private var likedCount: Int? = nil
     @State private var isLoadingLiked = false
 
-    // Only playlists owned by the current user
     var ownedPlaylists: [Playlist] {
         guard let me = api.user?.id else { return [] }
-        return api.playlists.filter { $0.owner.id == me }
+        return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
     }
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Your Playlists") {
-
-                    // Liked Songs row (styled like others)
                     NavigationLink(value: "liked-songs") {
                         HStack(spacing: 12) {
                             ZStack {
@@ -83,7 +80,6 @@ struct PlaylistPickerView: View {
                         }
                     }
 
-                    // Owned playlists
                     ForEach(ownedPlaylists) { pl in
                         NavigationLink(value: pl) {
                             HStack(spacing: 12) {
@@ -113,8 +109,6 @@ struct PlaylistPickerView: View {
         }
     }
 
-    // MARK: Helpers
-
     private var likedSubtitleText: String {
         if isLoadingLiked { return "Loading…" }
         if let c = likedCount { return "\(c) items" }
@@ -131,7 +125,6 @@ struct PlaylistPickerView: View {
         await fetchLikedCount()
     }
 
-    /// Lightweight: hits /v1/me/tracks?limit=1 and reads "total"
     private func fetchLikedCount() async {
         guard !isLoadingLiked else { return }
         isLoadingLiked = true
@@ -162,31 +155,43 @@ struct PlaylistPickerView: View {
     }
 }
 
-// MARK: - Sort a Playlist
+// MARK: - Sort a Playlist (global order; client-side pages of 20)
 
 struct SortView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var api: SpotifyAPI
     let playlist: Playlist
 
+    @State private var orderedAll: [PlaylistTrack] = []
     @State private var deck: [PlaylistTrack] = []
+    @State private var nextCursor: Int = 0
+
     @State private var removedURIs: [String] = []
     @State private var keepURIs: [String] = []
     @State private var topIndex: Int = 0
     @State private var isLoading = true
     @State private var showCommit = false
 
+    private let pageSize = 20
+
+    private var listKey: String { "playlist:\(playlist.id)" }
+    @State private var reviewedSet: Set<String> = []
+
     var body: some View {
         VStack(spacing: 12) {
             if isLoading {
-                ProgressView().task { await load() }
+                ProgressView().task { await loadAll() }
             } else if topIndex >= deck.count {
-                VStack(spacing: 16) {
-                    Image(systemName: "checkmark.seal.fill").font(.system(size: 40))
-                    Text("All done!").font(.title2).bold()
-                    Button("Commit \(removedURIs.count) removals") { showCommit = true }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(removedURIs.isEmpty)
+                if nextCursor < orderedAll.count {
+                    ProgressView("Loading more…").task { try? await loadNextPage() }
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: "checkmark.seal.fill").font(.system(size: 40))
+                        Text("All done!").font(.title2).bold()
+                        Button("Commit \(removedURIs.count) removals") { showCommit = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(removedURIs.isEmpty)
+                    }
                 }
             } else {
                 ZStack {
@@ -216,6 +221,7 @@ struct SortView: View {
             }
         }
         .navigationTitle(playlist.name)
+        .onChange(of: topIndex) { _ in Task { await topUpIfNeeded() } }
         .confirmationDialog("Apply removals to Spotify?",
                             isPresented: $showCommit, titleVisibility: .visible) {
             Button("Remove \(removedURIs.count) tracks", role: .destructive) {
@@ -225,21 +231,41 @@ struct SortView: View {
         }
     }
 
-    private func load() async {
+    private func loadAll() async {
+        reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
         do {
-            try await api.loadTracksPaged(playlistID: playlist.id, auth: auth) { newItems in
-                if isLoading { isLoading = false }   // drop spinner on first page
-                deck.append(contentsOf: newItems)
-            }
+            orderedAll = try await api.loadAllPlaylistTracksOrdered(
+                playlistID: playlist.id,
+                auth: auth,
+                reviewedURIs: reviewedSet
+            )
+            deck.removeAll()
+            nextCursor = 0
+            try? await loadNextPage()
+            isLoading = false
         } catch {
             print(error)
             isLoading = false
         }
     }
 
+    private func loadNextPage() async throws {
+        let end = min(nextCursor + pageSize, orderedAll.count)
+        guard nextCursor < end else { return }
+        deck.append(contentsOf: orderedAll[nextCursor..<end])
+        nextCursor = end
+    }
+
+    private func topUpIfNeeded() async {
+        let remaining = deck.count - topIndex
+        if remaining <= 5 { try? await loadNextPage() }
+    }
+
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
-        guard let uri = item.track?.uri else { return }
-        if direction == .left { removedURIs.append(uri) } else { keepURIs.append(uri) }
+        if let uri = item.track?.uri {
+            ReviewStore.shared.addReviewed(uri, for: listKey)
+            if direction == .left { removedURIs.append(uri) } else { keepURIs.append(uri) }
+        }
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
@@ -263,27 +289,45 @@ struct SortView: View {
     }
 }
 
-// MARK: - Sort Liked Songs (Saved Tracks, infinite paging @ 20)
+// MARK: - Sort Liked Songs (FAST-START + background paging)
 
 struct SortLikedView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var api: SpotifyAPI
 
+    // Fully ordered list we’re building incrementally
+    @State private var orderedAll: [PlaylistTrack] = []
+    // What’s currently loaded to swipe
     @State private var deck: [PlaylistTrack] = []
+    @State private var nextCursor: Int = 0
+
     @State private var toUnsaveIDs: [String] = []
     @State private var keepIDs: [String] = []
     @State private var topIndex: Int = 0
+
     @State private var isLoading = true
-    @State private var isLoadingMore = false
     @State private var showCommit = false
+
+    // Pager state
+    @State private var nextURL: String? = nil
+    @State private var isFetching = false
+    @State private var allDone = false
+
+    // Deterministic session shuffle
+    private let sessionSeed = UUID().uuidString
+    private let pageSize = 20
+    private let warmStartTarget = 100  // start once ~100 are ready
+
+    private let listKey = "liked"
+    @State private var reviewedSet: Set<String> = []
 
     var body: some View {
         VStack(spacing: 12) {
             if isLoading {
-                ProgressView().task { await initialLoad() }
+                ProgressView("Preparing deck…").task { await initialFastStart() }
             } else if topIndex >= deck.count {
-                if api.hasMoreSaved {
-                    ProgressView("Loading more…").task { await loadMoreIfNeeded(force: true) }
+                if !allDone || nextCursor < orderedAll.count {
+                    ProgressView("Loading more…").task { await topUpIfNeeded(force: true) }
                 } else {
                     VStack(spacing: 16) {
                         Image(systemName: "heart.slash.fill").font(.system(size: 40))
@@ -321,6 +365,7 @@ struct SortLikedView: View {
             }
         }
         .navigationTitle("Liked Songs")
+        .onChange(of: topIndex) { _ in Task { await topUpIfNeeded() } }
         .confirmationDialog("Remove from Liked Songs?",
                             isPresented: $showCommit, titleVisibility: .visible) {
             Button("Unsave \(toUnsaveIDs.count) tracks", role: .destructive) {
@@ -330,35 +375,95 @@ struct SortLikedView: View {
         }
     }
 
-    // MARK: Loading
+    // MARK: Fast-start pipeline
 
-    private func initialLoad() async {
-        api.resetSavedPager(limit: 20)               // page size here
-        await loadMoreIfNeeded(force: true)
+    private func initialFastStart() async {
+        reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
+        // Fetch pages until we have ~warmStartTarget items or we run out
+        while orderedAll.count < warmStartTarget, !allDone {
+            await fetchNextPageAndMerge()
+        }
+        // Start swiping immediately
+        nextCursor = 0
+        deck.removeAll()
+        try? await loadNextPage()
         isLoading = false
+
+        // Keep fetching remaining pages in the background
+        Task.detached { await backgroundFetchRemaining() }
     }
 
-    private func loadMoreIfNeeded(force: Bool = false) async {
-        guard !isLoadingMore else { return }
-        let remaining = deck.count - topIndex
-        guard force || remaining <= 5 else { return }   // prefetch threshold
-
-        isLoadingMore = true
-        if let newItems = try? await api.fetchNextSavedPage(auth: auth), !newItems.isEmpty {
-            deck.append(contentsOf: newItems)
+    private func backgroundFetchRemaining() async {
+        while !allDone {
+            await fetchNextPageAndMerge()
+            await topUpIfNeeded()
         }
-        isLoadingMore = false
+    }
+
+    private func fetchNextPageAndMerge() async {
+        guard !isFetching, !allDone else { return }
+        isFetching = true
+        defer { isFetching = false }
+
+        do {
+            let result = try await api.fetchSavedTracksPage(auth: auth, nextURL: nextURL)
+            nextURL = result.next
+            if result.items.isEmpty {
+                allDone = (nextURL == nil)
+                return
+            }
+            // Merge into global ordered list using deterministic rank
+            orderedAll.append(contentsOf: result.items)
+            orderedAll.sort { a, b in rankKey(a) < rankKey(b) }
+            if nextURL == nil { allDone = true }
+        } catch {
+            allDone = true
+            print("SavedTracks paging error: \(error)")
+        }
+    }
+
+    // MARK: Deterministic session shuffle with reviewed-last bias
+
+    private func rankKey(_ item: PlaylistTrack) -> (Int, UInt64) {
+        // reviewed == 1 sorts AFTER unreviewed == 0
+        let reviewed = isReviewed(item) ? 1 : 0
+        let id = item.track?.id ?? item.track?.uri ?? UUID().uuidString
+        return (reviewed, fnv1a64(sessionSeed + "|" + id))
+    }
+
+    private func isReviewed(_ item: PlaylistTrack) -> Bool {
+        if let id = item.track?.id { return reviewedSet.contains(id) }
+        if let uri = item.track?.uri { return reviewedSet.contains(uri) }
+        return false
+    }
+
+    // MARK: Deck paging from orderedAll
+
+    private func loadNextPage() async throws {
+        let end = min(nextCursor + pageSize, orderedAll.count)
+        guard nextCursor < end else { return }
+        deck = Array(orderedAll.prefix(end))  // keep deck as prefix; preserves swiped indices
+        nextCursor = end
+    }
+
+    private func topUpIfNeeded(force: Bool = false) async {
+        let remaining = deck.count - topIndex
+        guard force || remaining <= 5 else { return }
+        try? await loadNextPage()
     }
 
     // MARK: Swipe actions
 
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
         if let id = item.track?.id {
+            ReviewStore.shared.addReviewed(id, for: listKey)
+            reviewedSet.insert(id)
             if direction == .left { toUnsaveIDs.append(id) } else { keepIDs.append(id) }
+        } else if let uri = item.track?.uri {
+            ReviewStore.shared.addReviewed(uri, for: listKey)
         }
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        Task { await loadMoreIfNeeded() } // top-up when running low
     }
 
     private func undo() {
@@ -370,12 +475,7 @@ struct SortLikedView: View {
         }
     }
 
-    private func skip() {
-        topIndex += 1
-        Task { await loadMoreIfNeeded() }
-    }
-
-    // MARK: Mutations
+    private func skip() { topIndex += 1 }
 
     private func commit() async {
         do {
@@ -383,4 +483,16 @@ struct SortLikedView: View {
             toUnsaveIDs.removeAll()
         } catch { print(error) }
     }
+}
+
+// MARK: - Tiny hash (FNV-1a 64-bit) for deterministic shuffle
+
+private func fnv1a64(_ s: String) -> UInt64 {
+    var hash: UInt64 = 0xcbf29ce484222325
+    let prime: UInt64 = 0x100000001b3
+    for byte in s.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= prime
+    }
+    return hash
 }

@@ -14,22 +14,23 @@ struct Owner: Codable, Hashable { let id: String }
 struct TrackRef: Codable, Hashable { let total: Int }
 struct SpotifyImage: Codable, Hashable { let url: String }
 
+// MARK: - Tracks / Playlist Items
+
 struct TrackPage: Codable { let items: [PlaylistTrack]; let next: String? }
 
-struct PlaylistTrack: Codable, Identifiable, Hashable {
-    let id = UUID()
+struct PlaylistTrack: Codable, Hashable, Identifiable {
+    // Spotify returns ISO8601 strings; we keep as String for lightweight decode
     let added_at: String?
-    var track: Track?   // var + optional so we can patch URI and tolerate bad items
-
-    enum CodingKeys: String, CodingKey { case added_at, track }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        added_at = try? c.decode(String.self, forKey: .added_at)
-        track = try? c.decode(Track.self, forKey: .track)  // tolerant decode
-    }
+    let added_by: AddedBy?
+    var track: Track?
+    // Stable-ish identity per card/session
+    private let uuid = UUID()
+    var id: String { uuid.uuidString }
 }
 
+struct AddedBy: Codable, Hashable { let id: String?; let uri: String? }
+
+// Core track fields we use on cards
 struct Track: Codable, Hashable {
     var id: String?
     var name: String
@@ -37,7 +38,16 @@ struct Track: Codable, Hashable {
     var artists: [Artist]
     var album: Album
     var type: String?         // "track" or "episode"
+    var preview_url: String?
+    var explicit: Bool?
+    var duration_ms: Int?
+    var popularity: Int?
+    var is_playable: Bool?
 }
 
 struct Artist: Codable, Hashable { let name: String }
-struct Album: Codable, Hashable { let name: String; let images: [SpotifyImage]? }
+struct Album: Codable, Hashable {
+    let name: String
+    let images: [SpotifyImage]?
+    let release_date: String?
+}
