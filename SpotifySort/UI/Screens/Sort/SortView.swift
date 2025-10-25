@@ -3,6 +3,7 @@ import SwiftUI
 struct SortView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var api: SpotifyAPI
+    @EnvironmentObject var router: Router
     let playlist: Playlist
 
     @State private var orderedAll: [PlaylistTrack] = []
@@ -14,12 +15,21 @@ struct SortView: View {
     @State private var topIndex: Int = 0
     @State private var isLoading = true
     @State private var showCommit = false
+    @State private var showHistory = false
 
     @State private var duplicateIDs: Set<String> = []
     private let pageSize = 20
 
     private var listKey: String { "playlist:\(playlist.id)" }
     @State private var reviewedSet: Set<String> = []
+
+    // Pending entries captured when you swipe left; saved on commit
+    @State private var pendingRemoved: [RemovalEntry] = []
+
+    private var ownedPlaylists: [Playlist] {
+        guard let me = api.user?.id else { return api.playlists }
+        return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
+    }
 
     var body: some View {
         SelectrBackground {
@@ -74,7 +84,36 @@ struct SortView: View {
             .padding(.top, 8)
         }
         .selectrToolbar()
-        .navigationTitle(playlist.name)
+        .navigationBarBackButtonHidden(true)
+        .navigationTitle("")
+        .toolbar {
+            // Title dropdown
+            ToolbarItem(placement: .principal) {
+                Menu {
+                    Button { router.selectLiked() } label: {
+                        Label("Liked Songs", systemImage: "heart.fill")
+                    }
+                    ForEach(ownedPlaylists, id: \.id) { pl in
+                        Button { router.selectPlaylist(pl.id) } label: {
+                            Text(pl.name).lineLimit(1)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(playlist.name).font(.headline).foregroundStyle(.white)
+                        Image(systemName: "chevron.down").font(.subheadline).foregroundStyle(.white)
+                    }
+                }
+            }
+            // History button (top-right)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showHistory = true } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .accessibilityLabel("History")
+            }
+        }
+        .sheet(isPresented: $showHistory) { HistoryView() }
         .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
         .confirmationDialog("Apply removals to Spotify?",
                             isPresented: $showCommit, titleVisibility: .visible) {
@@ -86,6 +125,9 @@ struct SortView: View {
     }
 
     private func loadAll() async {
+        if api.user == nil { try? await api.loadMe(auth: auth) }
+        if api.playlists.isEmpty { try? await api.loadPlaylists(auth: auth) }
+
         reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
         do {
             orderedAll = try await api.loadAllPlaylistTracksOrdered(
@@ -130,7 +172,26 @@ struct SortView: View {
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
         if let uri = item.track?.uri {
             ReviewStore.shared.addReviewed(uri, for: listKey)
-            if direction == .left { removedURIs.append(uri) } else { keepURIs.append(uri) }
+            if direction == .left {
+                removedURIs.append(uri)
+                if let tr = item.track {
+                    pendingRemoved.append(
+                        RemovalEntry(
+                            source: .playlist,
+                            playlistID: playlist.id,
+                            playlistName: playlist.name,
+                            trackID: tr.id,
+                            trackURI: tr.uri,
+                            trackName: tr.name,
+                            artists: tr.artists.map { $0.name },
+                            album: tr.album.name,
+                            artworkURL: tr.album.images?.first?.url
+                        )
+                    )
+                }
+            } else {
+                keepURIs.append(uri)
+            }
         }
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -141,6 +202,9 @@ struct SortView: View {
         topIndex -= 1
         if let uri = deck[topIndex].track?.uri {
             if let i = removedURIs.lastIndex(of: uri) { removedURIs.remove(at: i) }
+            if let j = pendingRemoved.lastIndex(where: { $0.trackURI == uri }) {
+                pendingRemoved.remove(at: j)
+            }
             if let i = keepURIs.lastIndex(of: uri) { keepURIs.remove(at: i) }
         }
     }
@@ -150,6 +214,13 @@ struct SortView: View {
     private func commitRemovals() async {
         do {
             try await api.batchRemoveTracks(playlistID: playlist.id, uris: removedURIs, auth: auth)
+            // Persist only entries that correspond to the committed URIs
+            let toPersist = pendingRemoved.filter { e in
+                if let u = e.trackURI { return removedURIs.contains(u) }
+                return false
+            }
+            HistoryStore.shared.add(toPersist)
+            pendingRemoved.removeAll()
             removedURIs.removeAll()
         } catch { print(error) }
     }

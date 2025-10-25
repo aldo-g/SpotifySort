@@ -3,6 +3,7 @@ import SwiftUI
 struct SortLikedView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var api: SpotifyAPI
+    @EnvironmentObject var router: Router
 
     @State private var orderedAll: [PlaylistTrack] = []
     @State private var deck: [PlaylistTrack] = []
@@ -14,10 +15,14 @@ struct SortLikedView: View {
 
     @State private var isLoading = true
     @State private var showCommit = false
+    @State private var showHistory = false
 
     @State private var nextURL: String? = nil
     @State private var isFetching = false
     @State private var allDone = false
+
+    // Pending history entries for this session (only persisted on commit)
+    @State private var pendingRemoved: [RemovalEntry] = []
 
     private let sessionSeed = UUID().uuidString
     private let pageSize = 20
@@ -25,6 +30,11 @@ struct SortLikedView: View {
 
     private let listKey = "liked"
     @State private var reviewedSet: Set<String> = []
+
+    private var ownedPlaylists: [Playlist] {
+        guard let me = api.user?.id else { return api.playlists }
+        return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
+    }
 
     var body: some View {
         SelectrBackground {
@@ -80,7 +90,38 @@ struct SortLikedView: View {
             .padding(.top, 8)
         }
         .selectrToolbar()
-        .navigationTitle("Liked Songs")
+        .navigationBarBackButtonHidden(true)
+        .navigationTitle("")
+        .toolbar {
+            // Title dropdown
+            ToolbarItem(placement: .principal) {
+                Menu {
+                    Button { router.selectLiked() } label: {
+                        Label("Liked Songs", systemImage: "heart.fill")
+                    }
+                    ForEach(ownedPlaylists, id: \.id) { pl in
+                        Button { router.selectPlaylist(pl.id) } label: {
+                            Text(pl.name).lineLimit(1)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Liked Songs").font(.headline).foregroundStyle(.white)
+                        Image(systemName: "chevron.down").font(.subheadline).foregroundStyle(.white)
+                    }
+                }
+            }
+            // History button (top-right)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showHistory = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .accessibilityLabel("History")
+            }
+        }
+        .sheet(isPresented: $showHistory) { HistoryView() }
         .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
         .confirmationDialog("Remove from Liked Songs?",
                             isPresented: $showCommit, titleVisibility: .visible) {
@@ -91,9 +132,12 @@ struct SortLikedView: View {
         }
     }
 
-    // MARK: Fast-start pipeline
+    // MARK: Fast-start & paging
 
     private func initialFastStart() async {
+        if api.user == nil { try? await api.loadMe(auth: auth) }
+        if api.playlists.isEmpty { try? await api.loadPlaylists(auth: auth) }
+
         reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
         while orderedAll.count < warmStartTarget, !allDone {
             await fetchNextPageAndMerge()
@@ -132,7 +176,7 @@ struct SortLikedView: View {
         }
     }
 
-    // MARK: Deterministic shuffle with reviewed-last bias
+    // MARK: Shuffle bias
 
     private func rankKey(_ item: PlaylistTrack) -> (Int, UInt64) {
         let reviewed = isReviewed(item) ? 1 : 0
@@ -167,7 +211,26 @@ struct SortLikedView: View {
         if let id = item.track?.id {
             ReviewStore.shared.addReviewed(id, for: listKey)
             reviewedSet.insert(id)
-            if direction == .left { toUnsaveIDs.append(id) } else { keepIDs.append(id) }
+            if direction == .left {
+                toUnsaveIDs.append(id)
+                if let tr = item.track {
+                    pendingRemoved.append(
+                        RemovalEntry(
+                            source: .liked,
+                            playlistID: nil,
+                            playlistName: nil,
+                            trackID: tr.id,
+                            trackURI: tr.uri,
+                            trackName: tr.name,
+                            artists: tr.artists.map { $0.name },
+                            album: tr.album.name,
+                            artworkURL: tr.album.images?.first?.url
+                        )
+                    )
+                }
+            } else {
+                keepIDs.append(id)
+            }
         } else if let uri = item.track?.uri {
             ReviewStore.shared.addReviewed(uri, for: listKey)
         }
@@ -180,6 +243,10 @@ struct SortLikedView: View {
         topIndex -= 1
         if let id = deck[topIndex].track?.id {
             if let i = toUnsaveIDs.lastIndex(of: id) { toUnsaveIDs.remove(at: i) }
+            // remove pending entry for this track if present
+            if let j = pendingRemoved.lastIndex(where: { $0.trackID == id }) {
+                pendingRemoved.remove(at: j)
+            }
             if let i = keepIDs.lastIndex(of: id) { keepIDs.remove(at: i) }
         }
     }
@@ -189,18 +256,19 @@ struct SortLikedView: View {
     private func commit() async {
         do {
             try await api.batchUnsaveTracks(trackIDs: toUnsaveIDs, auth: auth)
+            // Only persist entries that are part of the commit (in case of undos)
+            let toPersist = pendingRemoved.filter { id in toUnsaveIDs.contains(id.trackID ?? "") }
+            HistoryStore.shared.add(toPersist)
+            pendingRemoved.removeAll()
             toUnsaveIDs.removeAll()
         } catch { print(error) }
     }
 }
 
-// Tiny hash (FNV-1a 64-bit) for deterministic shuffle
+// Tiny hash (FNV-1a 64-bit)
 private func fnv1a64(_ s: String) -> UInt64 {
     var hash: UInt64 = 0xcbf29ce484222325
     let prime: UInt64 = 0x100000001b3
-    for byte in s.utf8 {
-        hash ^= UInt64(byte)
-        hash &*= prime
-    }
+    for byte in s.utf8 { hash ^= UInt64(byte); hash &*= prime }
     return hash
 }
