@@ -14,15 +14,15 @@ struct SwipeCard: View {
     @State private var offset: CGSize = .zero
     @GestureState private var isDragging = false
 
-    // Preview state
+    // Preview / playback state
     @State private var previewURL: String?
     @State private var isResolvingPreview = false
     @State private var isPlaying = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Artwork + floating play button (if preview exists)
-            ZStack(alignment: .bottomTrailing) {
+            // Artwork + centered controls at the bottom
+            ZStack(alignment: .bottom) {
                 RemoteImage(url: track.album.images?.first?.url)
                     .frame(height: 260)
                     .clipped()
@@ -32,35 +32,41 @@ struct SwipeCard: View {
                     ProgressView()
                         .padding(10)
                         .background(.ultraThinMaterial, in: Circle())
-                        .padding(12)
+                        .padding(.bottom, 12)
                 }
 
-                if let url = previewURL {
-                    Button {
-                        if isPlaying {
-                            PreviewPlayer.shared.stop()
-                            isPlaying = false
-                        } else {
-                            PreviewPlayer.shared.play(url)
-                            isPlaying = true
+                // Bottom-center stack: bars over button
+                VStack(spacing: 8) {
+                    SoundBars()
+                        .frame(height: 35)
+                        .opacity(isPlaying ? 1 : 0)
+
+                    if let url = previewURL {
+                        Button {
+                            if isPlaying {
+                                PreviewPlayer.shared.stop()
+                                isPlaying = false
+                            } else {
+                                PreviewPlayer.shared.play(url)
+                                isPlaying = true
+                            }
+                        } label: {
+                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.system(size: 36, weight: .semibold))
+                                .shadow(radius: 3)
                         }
-                    } label: {
-                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 34, weight: .semibold))
-                            .shadow(radius: 3)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .padding(12)
                 }
+                .padding(.bottom, 10)
+                .frame(maxWidth: .infinity) // center horizontally
             }
 
+            // --- Track Info ---------------------------------------------------
             VStack(alignment: .leading, spacing: 6) {
-                // Title + explicit badge
                 HStack {
                     Text(track.name)
-                        .font(.title3)
-                        .bold()
-                        .lineLimit(2)
+                        .font(.title3).bold().lineLimit(2)
                     if track.explicit == true {
                         Text("E")
                             .font(.caption2)
@@ -71,38 +77,26 @@ struct SwipeCard: View {
                     }
                 }
 
-                // Artists
                 Text(track.artists.map { $0.name }.joined(separator: ", "))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
 
-                // Album + Year
                 Text(albumLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
 
-                // Added By / Added At
                 if let info = addedInfoLine {
-                    Text(info)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text(info).font(.caption2).foregroundStyle(.secondary)
                 }
 
-                // Duplicate badge
                 if isDuplicate {
                     Label("Duplicate in this playlist", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                        .padding(.top, 2)
+                        .font(.caption2).foregroundStyle(.yellow).padding(.top, 2)
                 }
             }
 
             Spacer(minLength: 0)
         }
         .padding()
-        .background(.ultraThinMaterial)
+        .background(.thinMaterial) // <- darker than ultraThin so it pops on the gradient
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(radius: 6)
         .overlay(alignment: .topLeading) { label("KEEP", .green).opacity(offset.width > 60 ? 1 : 0) }
@@ -129,21 +123,17 @@ struct SwipeCard: View {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: Helpers -----------------------------------------------------------
 
     private var albumLine: String {
         let year = (track.album.release_date ?? "").prefix(4)
-        if year.isEmpty { return track.album.name }
-        return "\(track.album.name) • \(year)"
+        return year.isEmpty ? track.album.name : "\(track.album.name) • \(year)"
     }
 
     private var addedInfoLine: String? {
-        let added = addedAt?.prefix(10) ?? ""   // YYYY-MM-DD
-        if let by = addedBy, !by.isEmpty {
-            return "Added by \(by)\(added.isEmpty ? "" : " • \(added)")"
-        } else if !added.isEmpty {
-            return "Added \(added)"
-        }
+        let added = addedAt?.prefix(10) ?? ""
+        if let by = addedBy, !by.isEmpty { return "Added by \(by)\(added.isEmpty ? "" : " • \(added)")" }
+        if !added.isEmpty { return "Added \(added)" }
         return nil
     }
 
@@ -167,7 +157,7 @@ struct SwipeCard: View {
         }
     }
 
-    // Resolve Spotify/Deezer preview and cache into API.previewMap
+    // --- Resolve Spotify/Deezer preview -------------------------------------
     private func resolvePreviewIfNeeded() async {
         let key = track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
 
@@ -186,9 +176,7 @@ struct SwipeCard: View {
 
         if let deezer = await DeezerPreviewService.shared.resolvePreview(for: track) {
             previewURL = deezer
-            await MainActor.run {
-                api.previewMap[key] = deezer
-            }
+            await MainActor.run { api.previewMap[key] = deezer }
         }
     }
 }
