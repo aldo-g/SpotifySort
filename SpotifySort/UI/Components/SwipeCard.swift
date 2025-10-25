@@ -21,48 +21,21 @@ struct SwipeCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Artwork + centered controls at the bottom
-            ZStack(alignment: .bottom) {
-                RemoteImage(url: track.album.images?.first?.url)
-                    .frame(height: 260)
-                    .clipped()
-                    .cornerRadius(14)
-
-                if isResolvingPreview && previewURL == nil {
-                    ProgressView()
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .padding(.bottom, 12)
-                }
-
-                // Bottom-center stack: bars over button
-                VStack(spacing: 8) {
-                    SoundBars()
-                        .frame(height: 35)
-                        .opacity(isPlaying ? 1 : 0)
-
-                    if let url = previewURL {
-                        Button {
-                            if isPlaying {
-                                PreviewPlayer.shared.stop()
-                                isPlaying = false
-                            } else {
-                                PreviewPlayer.shared.play(url)
-                                isPlaying = true
-                            }
-                        } label: {
-                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 36, weight: .semibold))
-                                .shadow(radius: 3)
-                        }
-                        .buttonStyle(.plain)
+            // ARTWORK
+            RemoteImage(url: track.album.images?.first?.url)
+                .frame(height: 260)
+                .clipped()
+                .cornerRadius(14)
+                .overlay {
+                    // small spinner while we resolve a preview (optional)
+                    if isResolvingPreview && previewURL == nil {
+                        ProgressView()
+                            .padding(10)
+                            .background(.ultraThinMaterial, in: Circle())
                     }
                 }
-                .padding(.bottom, 10)
-                .frame(maxWidth: .infinity) // center horizontally
-            }
 
-            // --- Track Info ---------------------------------------------------
+            // TRACK INFO
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(track.name)
@@ -94,11 +67,43 @@ struct SwipeCard: View {
             }
 
             Spacer(minLength: 0)
+
+            // PLAYER STRIP — sits in the empty space at the BOTTOM of the card
+            if let url = previewURL {
+                HStack(spacing: 12) {
+                    Button {
+                        if isPlaying {
+                            PreviewPlayer.shared.stop()
+                            isPlaying = false
+                        } else {
+                            PreviewPlayer.shared.play(url)
+                            isPlaying = true
+                        }
+                    } label: {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.black)
+                            .frame(width: 34, height: 34)
+                            .background(.white, in: Circle())
+                            .shadow(radius: 2, y: 1)
+                    }
+                    .buttonStyle(.plain)
+
+                    ScrollingWaveform()
+                        .frame(height: 26)
+                        .opacity(isPlaying ? 1 : 0.55)
+                        .accessibilityHidden(true)
+                }
+                .padding(.vertical, 10)
+                .glassyPanel(corner: 14) // from Theme.swift – gives a nice “glass” dock
+            }
         }
         .padding()
-        .background(.thinMaterial) // <- darker than ultraThin so it pops on the gradient
+        .background(.thinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(radius: 6)
+
+        // swipe affordances
         .overlay(alignment: .topLeading) { label("KEEP", .green).opacity(offset.width > 60 ? 1 : 0) }
         .overlay(alignment: .topTrailing) { label("REMOVE", .red).opacity(offset.width < -60 ? 1 : 0) }
         .rotationEffect(.degrees(Double(offset.width / 20)))
@@ -165,7 +170,6 @@ struct SwipeCard: View {
             previewURL = s
             return
         }
-
         if let cached = api.previewMap[key] {
             previewURL = cached
             return
