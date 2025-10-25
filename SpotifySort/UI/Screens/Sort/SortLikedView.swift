@@ -9,20 +9,13 @@ struct SortLikedView: View {
     @State private var deck: [PlaylistTrack] = []
     @State private var nextCursor: Int = 0
 
-    @State private var toUnsaveIDs: [String] = []
-    @State private var keepIDs: [String] = []
     @State private var topIndex: Int = 0
-
     @State private var isLoading = true
-    @State private var showCommit = false
     @State private var showHistory = false
 
     @State private var nextURL: String? = nil
     @State private var isFetching = false
     @State private var allDone = false
-
-    // Pending history entries for this session (only persisted on commit)
-    @State private var pendingRemoved: [RemovalEntry] = []
 
     private let sessionSeed = UUID().uuidString
     private let pageSize = 20
@@ -45,14 +38,11 @@ struct SortLikedView: View {
                     if !allDone || nextCursor < orderedAll.count {
                         ProgressView("Loading more…").task { await topUpIfNeeded(force: true) }
                     } else {
-                        VStack(spacing: 16) {
+                        VStack(spacing: 10) {
                             Image(systemName: "heart.slash.fill")
                                 .font(.system(size: 40)).foregroundStyle(.white)
                             Text("All liked tracks reviewed")
                                 .font(.title3).bold().foregroundStyle(.white)
-                            Button("Unsave \(toUnsaveIDs.count) tracks") { showCommit = true }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(toUnsaveIDs.isEmpty)
                         }
                     }
                 } else {
@@ -73,18 +63,6 @@ struct SortLikedView: View {
                         }
                     }
                     .frame(maxHeight: .infinity)
-
-                    HStack(spacing: 12) {
-                        Button { undo() }  label: { Label("Undo",  systemImage: "arrow.uturn.backward") }
-                            .buttonStyle(.bordered).controlSize(.large)
-                        Button { skip() }  label: { Label("Skip",  systemImage: "forward.frame") }
-                            .buttonStyle(.bordered).controlSize(.large)
-                        Button { showCommit = true } label: { Label("Commit", systemImage: "tray.and.arrow.down.fill") }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
-                            .disabled(toUnsaveIDs.isEmpty)
-                    }
-                    .tint(.white)
-                    .glassyPanel()
                 }
             }
             .padding(.top, 8)
@@ -111,11 +89,9 @@ struct SortLikedView: View {
                     }
                 }
             }
-            // History button (top-right)
+            // History button
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showHistory = true
-                } label: {
+                Button { showHistory = true } label: {
                     Image(systemName: "clock.arrow.circlepath")
                 }
                 .accessibilityLabel("History")
@@ -123,16 +99,9 @@ struct SortLikedView: View {
         }
         .sheet(isPresented: $showHistory) { HistoryView() }
         .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
-        .confirmationDialog("Remove from Liked Songs?",
-                            isPresented: $showCommit, titleVisibility: .visible) {
-            Button("Unsave \(toUnsaveIDs.count) tracks", role: .destructive) {
-                Task { await commit() }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
     }
 
-    // MARK: Fast-start & paging
+    // MARK: Fast-start pipeline
 
     private func initialFastStart() async {
         if api.user == nil { try? await api.loadMe(auth: auth) }
@@ -176,7 +145,7 @@ struct SortLikedView: View {
         }
     }
 
-    // MARK: Shuffle bias
+    // MARK: Deterministic shuffle with reviewed-last bias
 
     private func rankKey(_ item: PlaylistTrack) -> (Int, UInt64) {
         let reviewed = isReviewed(item) ? 1 : 0
@@ -205,63 +174,46 @@ struct SortLikedView: View {
         try? await loadNextPage()
     }
 
-    // MARK: Actions
+    // MARK: Actions (auto-commit)
 
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
+        // mark reviewed immediately
         if let id = item.track?.id {
             ReviewStore.shared.addReviewed(id, for: listKey)
             reviewedSet.insert(id)
-            if direction == .left {
-                toUnsaveIDs.append(id)
-                if let tr = item.track {
-                    pendingRemoved.append(
-                        RemovalEntry(
-                            source: .liked,
-                            playlistID: nil,
-                            playlistName: nil,
-                            trackID: tr.id,
-                            trackURI: tr.uri,
-                            trackName: tr.name,
-                            artists: tr.artists.map { $0.name },
-                            album: tr.album.name,
-                            artworkURL: tr.album.images?.first?.url
-                        )
-                    )
-                }
-            } else {
-                keepIDs.append(id)
-            }
         } else if let uri = item.track?.uri {
             ReviewStore.shared.addReviewed(uri, for: listKey)
         }
+
+        // auto-commit if swiped left
+        if direction == .left, let tr = item.track, let id = tr.id {
+            Task {
+                await removeFromLiked(id: id, track: tr)
+            }
+        }
+
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
-    private func undo() {
-        guard topIndex > 0 else { return }
-        topIndex -= 1
-        if let id = deck[topIndex].track?.id {
-            if let i = toUnsaveIDs.lastIndex(of: id) { toUnsaveIDs.remove(at: i) }
-            // remove pending entry for this track if present
-            if let j = pendingRemoved.lastIndex(where: { $0.trackID == id }) {
-                pendingRemoved.remove(at: j)
-            }
-            if let i = keepIDs.lastIndex(of: id) { keepIDs.remove(at: i) }
-        }
-    }
-
-    private func skip() { topIndex += 1 }
-
-    private func commit() async {
+    private func removeFromLiked(id: String, track: Track) async {
         do {
-            try await api.batchUnsaveTracks(trackIDs: toUnsaveIDs, auth: auth)
-            // Only persist entries that are part of the commit (in case of undos)
-            let toPersist = pendingRemoved.filter { id in toUnsaveIDs.contains(id.trackID ?? "") }
-            HistoryStore.shared.add(toPersist)
-            pendingRemoved.removeAll()
-            toUnsaveIDs.removeAll()
-        } catch { print(error) }
+            try await api.batchUnsaveTracks(trackIDs: [id], auth: auth)
+            let entry = RemovalEntry(
+                source: .liked,
+                playlistID: nil,
+                playlistName: nil,
+                trackID: track.id,
+                trackURI: track.uri,
+                trackName: track.name,
+                artists: track.artists.map { $0.name },
+                album: track.album.name,
+                artworkURL: track.album.images?.first?.url
+            )
+            await MainActor.run { HistoryStore.shared.add([entry]) }
+        } catch {
+            print("Unsave failed:", error)
+        }
     }
 }
 

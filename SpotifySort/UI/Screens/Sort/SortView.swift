@@ -10,11 +10,8 @@ struct SortView: View {
     @State private var deck: [PlaylistTrack] = []
     @State private var nextCursor: Int = 0
 
-    @State private var removedURIs: [String] = []
-    @State private var keepURIs: [String] = []
     @State private var topIndex: Int = 0
     @State private var isLoading = true
-    @State private var showCommit = false
     @State private var showHistory = false
 
     @State private var duplicateIDs: Set<String> = []
@@ -22,9 +19,6 @@ struct SortView: View {
 
     private var listKey: String { "playlist:\(playlist.id)" }
     @State private var reviewedSet: Set<String> = []
-
-    // Pending entries captured when you swipe left; saved on commit
-    @State private var pendingRemoved: [RemovalEntry] = []
 
     private var ownedPlaylists: [Playlist] {
         guard let me = api.user?.id else { return api.playlists }
@@ -40,13 +34,10 @@ struct SortView: View {
                     if nextCursor < orderedAll.count {
                         ProgressView("Loading more…").task { try? await loadNextPage() }
                     } else {
-                        VStack(spacing: 16) {
+                        VStack(spacing: 10) {
                             Image(systemName: "checkmark.seal.fill")
                                 .font(.system(size: 40)).foregroundStyle(.white)
                             Text("All done!").font(.title2).bold().foregroundStyle(.white)
-                            Button("Commit \(removedURIs.count) removals") { showCommit = true }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(removedURIs.isEmpty)
                         }
                     }
                 } else {
@@ -67,18 +58,6 @@ struct SortView: View {
                         }
                     }
                     .frame(maxHeight: .infinity)
-
-                    HStack(spacing: 12) {
-                        Button { undo() }  label: { Label("Undo",  systemImage: "arrow.uturn.backward") }
-                            .buttonStyle(.bordered).controlSize(.large)
-                        Button { skip() }  label: { Label("Skip",  systemImage: "forward.frame") }
-                            .buttonStyle(.bordered).controlSize(.large)
-                        Button { showCommit = true } label: { Label("Commit", systemImage: "tray.and.arrow.down.fill") }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
-                            .disabled(removedURIs.isEmpty)
-                    }
-                    .tint(.white)
-                    .glassyPanel()
                 }
             }
             .padding(.top, 8)
@@ -105,7 +84,7 @@ struct SortView: View {
                     }
                 }
             }
-            // History button (top-right)
+            // History button
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showHistory = true } label: {
                     Image(systemName: "clock.arrow.circlepath")
@@ -115,13 +94,6 @@ struct SortView: View {
         }
         .sheet(isPresented: $showHistory) { HistoryView() }
         .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
-        .confirmationDialog("Apply removals to Spotify?",
-                            isPresented: $showCommit, titleVisibility: .visible) {
-            Button("Remove \(removedURIs.count) tracks", role: .destructive) {
-                Task { await commitRemovals() }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
     }
 
     private func loadAll() async {
@@ -169,59 +141,41 @@ struct SortView: View {
         if remaining <= 5 { try? await loadNextPage() }
     }
 
+    // MARK: Actions (auto-commit)
+
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
+        // record reviewed locally
         if let uri = item.track?.uri {
             ReviewStore.shared.addReviewed(uri, for: listKey)
-            if direction == .left {
-                removedURIs.append(uri)
-                if let tr = item.track {
-                    pendingRemoved.append(
-                        RemovalEntry(
-                            source: .playlist,
-                            playlistID: playlist.id,
-                            playlistName: playlist.name,
-                            trackID: tr.id,
-                            trackURI: tr.uri,
-                            trackName: tr.name,
-                            artists: tr.artists.map { $0.name },
-                            album: tr.album.name,
-                            artworkURL: tr.album.images?.first?.url
-                        )
-                    )
-                }
-            } else {
-                keepURIs.append(uri)
+        }
+
+        if direction == .left, let tr = item.track, let uri = tr.uri {
+            Task {
+                await removeFromPlaylist(uri: uri, track: tr)
             }
         }
+
         topIndex += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
-    private func undo() {
-        guard topIndex > 0 else { return }
-        topIndex -= 1
-        if let uri = deck[topIndex].track?.uri {
-            if let i = removedURIs.lastIndex(of: uri) { removedURIs.remove(at: i) }
-            if let j = pendingRemoved.lastIndex(where: { $0.trackURI == uri }) {
-                pendingRemoved.remove(at: j)
-            }
-            if let i = keepURIs.lastIndex(of: uri) { keepURIs.remove(at: i) }
-        }
-    }
-
-    private func skip() { topIndex += 1 }
-
-    private func commitRemovals() async {
+    private func removeFromPlaylist(uri: String, track: Track) async {
         do {
-            try await api.batchRemoveTracks(playlistID: playlist.id, uris: removedURIs, auth: auth)
-            // Persist only entries that correspond to the committed URIs
-            let toPersist = pendingRemoved.filter { e in
-                if let u = e.trackURI { return removedURIs.contains(u) }
-                return false
-            }
-            HistoryStore.shared.add(toPersist)
-            pendingRemoved.removeAll()
-            removedURIs.removeAll()
-        } catch { print(error) }
+            try await api.batchRemoveTracks(playlistID: playlist.id, uris: [uri], auth: auth)
+            let entry = RemovalEntry(
+                source: .playlist,
+                playlistID: playlist.id,
+                playlistName: playlist.name,
+                trackID: track.id,
+                trackURI: track.uri,
+                trackName: track.name,
+                artists: track.artists.map { $0.name },
+                album: track.album.name,
+                artworkURL: track.album.images?.first?.url
+            )
+            await MainActor.run { HistoryStore.shared.add([entry]) }
+        } catch {
+            print("Remove from playlist failed:", error)
+        }
     }
 }
