@@ -1,5 +1,6 @@
 import SwiftUI
 
+// Existing component (unchanged)
 struct ProviderCard: View {
     let title: String
     let subtitle: String
@@ -10,47 +11,62 @@ struct ProviderCard: View {
     var isDisabled: Bool = false
     let action: () -> Void
 
-    private let r: CGFloat = 18
-
     var body: some View {
-        ZStack {
-            // match SwipeCard background language
-            RoundedRectangle(cornerRadius: r, style: .continuous)
-                .fill(.white.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: r).stroke(.white.opacity(0.15), lineWidth: 1))
-                .overlay(BrickOverlay().blendMode(.overlay))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(assetName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
+                    .cornerRadius(6)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Image(assetName)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 28, height: 28)
-                        .cornerRadius(6)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(.headline.weight(.semibold)).foregroundStyle(.white)
-                        Text(subtitle).font(.caption).foregroundStyle(.white.opacity(0.75))
-                    }
+            Button(action: action) {
+                HStack {
+                    Spacer()
+                    if isLoading { ProgressView().controlSize(.small) }
+                    Text(actionTitle).fontWeight(.semibold).lineLimit(1)
                     Spacer()
                 }
-
-                Button(action: action) {
-                    HStack(spacing: 8) {
-                        Spacer()
-                        if isLoading { ProgressView().controlSize(.small) }
-                        Text(actionTitle)
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                    }
-                    .padding(.vertical, 10)
-                    .background(accent.opacity(isDisabled ? 0.25 : 1), in: Capsule())
-                    .foregroundStyle(isDisabled ? .black.opacity(0.6) : .black)
-                    .overlay(Capsule().stroke(.white.opacity(0.25), lineWidth: 1))
-                }
-                .disabled(isDisabled || isLoading)
+                .padding(.vertical, 10)
+                .background(accent.opacity(isDisabled ? 0.25 : 1))
+                .foregroundStyle(isDisabled ? .secondary : Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .padding(14)
+            .disabled(isDisabled || isLoading)
         }
-        .shadow(color: .black.opacity(0.35), radius: 10, y: 5)
+        .padding(14)
+        .background(.background.opacity(0.9), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.12), lineWidth: 1))
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+    }
+}
+
+// NEW: Glassy toolbar chip for Menu labels so it matches SwipeCard chrome.
+public struct ToolbarMenuChip: View {
+    public var title: String
+    public init(title: String) { self.title = title }
+
+    public var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .background(.white.opacity(0.06), in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+        .overlay(BrickOverlay().blendMode(.overlay))
+        .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
     }
 }

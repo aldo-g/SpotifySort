@@ -69,15 +69,15 @@ struct SortLikedView: View {
         .selectrToolbar()
         .navigationBarBackButtonHidden(true)
         .navigationTitle("")
-        .toolbarBackground(.hidden, for: .navigationBar)   // 👈 hides the default blur/material
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarBackground(.clear, for: .navigationBar)
-        .toolbar(.visible, for: .navigationBar)
+        .tint(.white) // make toolbar items white to match the theme
         .toolbar {
-            // Title dropdown
+            // Title dropdown styled as a glassy chip
             ToolbarItem(placement: .principal) {
                 Menu {
                     Button { router.selectLiked() } label: {
-                        Label("Liked Songs", systemImage: "heart.fill")
+                        Label("Liked Songs", systemImage: "")
                     }
                     ForEach(ownedPlaylists, id: \.id) { pl in
                         Button { router.selectPlaylist(pl.id) } label: {
@@ -85,10 +85,7 @@ struct SortLikedView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 6) {
-                        Text("Liked Songs").font(.headline).foregroundStyle(.white)
-                        Image(systemName: "chevron.down").font(.subheadline).foregroundStyle(.white)
-                    }
+                    ToolbarMenuChip(title: "Liked Songs")
                 }
             }
             // History button
