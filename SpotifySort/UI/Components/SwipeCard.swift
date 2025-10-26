@@ -95,7 +95,6 @@ struct SwipeCard: View {
             }
 
             Spacer(minLength: 0)
-            BrickSeparator()
 
             // === PLAYER (reserved height even if no preview) ===
             Group {
@@ -343,33 +342,5 @@ private struct BrickSeparator: View {
                 }
             )
             .accessibilityHidden(true)
-    }
-}
-
-private struct BrickOverlay: View {
-    var lineWidth: CGFloat = 1, rowHeight: CGFloat = 44, columnWidth: CGFloat = 88, opacity: CGFloat = 0.10
-    var body: some View {
-        GeometryReader { _ in
-            Canvas { ctx, size in
-                let hLines = stride(from: 0.0, through: size.height, by: rowHeight)
-                for (i, y) in hLines.enumerated() {
-                    var path = Path()
-                    path.move(to: CGPoint(x: 0, y: y))
-                    path.addLine(to: CGPoint(x: size.width, y: y))
-                    ctx.stroke(path, with: .color(.white.opacity(opacity)), lineWidth: lineWidth)
-                    let offset = (i % 2 == 0) ? 0.0 : columnWidth/2
-                    var x = -offset
-                    while x <= size.width + columnWidth {
-                        var v = Path()
-                        v.move(to: CGPoint(x: x, y: y))
-                        v.addLine(to: CGPoint(x: x, y: min(y + rowHeight, size.height)))
-                        ctx.stroke(v, with: .color(.white.opacity(opacity * 0.9)), lineWidth: 0.8)
-                        x += columnWidth
-                    }
-                }
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }

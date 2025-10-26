@@ -8,102 +8,55 @@ struct HistoryView: View {
 
     @State private var restoring: Set<UUID> = []
 
-    private let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
-
     var body: some View {
         NavigationStack {
-            Group {
+            ZStack {
+                // match app background treatment
+                LinearGradient(colors: SelectrTheme.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .ignoresSafeArea()
+                    .overlay(BrickOverlay().blendMode(.overlay).opacity(0.35))
+
                 if store.entries.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .foregroundStyle(.white)
                             .font(.system(size: 44, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text("No history yet")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                        Text("Removed songs will appear here after you commit changes.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.9))
+                        Text("No history yet").font(.headline).foregroundStyle(.white.opacity(0.9))
+                        Text("Removed songs will appear here after you swipe left.")
+                            .font(.subheadline).foregroundStyle(.white.opacity(0.75))
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.ultraThinMaterial)
+                    .padding()
                 } else {
-                    List {
-                        ForEach(store.entries) { e in
-                            HStack(spacing: 12) {
-                                RemoteImage(url: e.artworkURL)
-                                    .frame(width: 44, height: 44)
-                                    .cornerRadius(6)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(e.trackName).font(.headline).lineLimit(1)
-                                    Text(e.artists.joined(separator: ", "))
-                                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                                    Text(sourceText(e))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button {
-                                    Task { await revert(e) }
-                                } label: {
-                                    if restoring.contains(e.id) {
-                                        ProgressView().controlSize(.small)
-                                    } else {
-                                        Label("Revert", systemImage: "arrow.uturn.backward.circle.fill")
-                                            .labelStyle(.iconOnly)
-                                    }
-                                }
-                                .buttonStyle(.borderless)
-                                .disabled(restoring.contains(e.id) || !canRevert(e))
-                                .opacity(canRevert(e) ? 1 : 0.4)
-                                .accessibilityLabel("Revert")
-                            }
-                            .listRowBackground(Color.clear)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button {
-                                    Task { await revert(e) }
-                                } label: {
-                                    Label("Revert", systemImage: "arrow.uturn.backward")
-                                }
-                                .tint(.green)
-                                .disabled(restoring.contains(e.id) || !canRevert(e))
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(store.entries) { e in
+                                HistoryRow(entry: e,
+                                           isRestoring: restoring.contains(e.id),
+                                           onRevert: { Task { await revert(e) } })
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
                     }
-                    .scrollContentBackground(.hidden)
-                    .background(.ultraThinMaterial)
                 }
             }
-            .navigationTitle("History")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(role: .destructive) {
-                        store.clear()
-                    } label: {
+                    Button(role: .destructive) { store.clear() } label: {
                         Label("Clear All", systemImage: "trash")
                     }
                     .disabled(store.entries.isEmpty)
                 }
             }
+            .tint(.white)
         }
         .presentationDetents([.medium, .large])
-    }
-
-    private func sourceText(_ e: RemovalEntry) -> String {
-        switch e.source {
-        case .liked: return "Removed from Liked Songs"
-        case .playlist: return "Removed from \(e.playlistName ?? "Playlist")"
-        }
     }
 
     private func canRevert(_ e: RemovalEntry) -> Bool {
@@ -113,7 +66,6 @@ struct HistoryView: View {
         }
     }
 
-    // MARK: - Revert action (now removes entry on success)
     private func revert(_ e: RemovalEntry) async {
         guard canRevert(e), !restoring.contains(e.id) else { return }
         restoring.insert(e.id)
@@ -122,22 +74,80 @@ struct HistoryView: View {
         do {
             switch e.source {
             case .liked:
-                if let id = e.trackID {
-                    try await api.batchSaveTracks(trackIDs: [id], auth: auth)
-                } else { throw RevertError.missingIdentifiers }
+                try await api.batchSaveTracks(trackIDs: [e.trackID!], auth: auth)
             case .playlist:
-                if let pid = e.playlistID, let uri = e.trackURI {
-                    try await api.batchAddTracks(playlistID: pid, uris: [uri], auth: auth)
-                } else { throw RevertError.missingIdentifiers }
+                try await api.batchAddTracks(playlistID: e.playlistID!, uris: [e.trackURI!], auth: auth)
             }
-            // ✅ Remove from history immediately after successful restore
-            await store.remove(id: e.id)
+            await MainActor.run { store.remove(id: e.id) }
             ToastCenter.shared.show("Restored")
         } catch {
             print("Revert failed:", error)
             ToastCenter.shared.show("Restore failed")
         }
     }
+}
 
-    enum RevertError: Error { case missingIdentifiers }
+private struct HistoryRow: View {
+    let entry: RemovalEntry
+    let isRestoring: Bool
+    let onRevert: () -> Void
+
+    private let r: CGFloat = 14
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RemoteImage(url: entry.artworkURL)
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.18), lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.trackName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(entry.artists.joined(separator: ", "))
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(1)
+                Text(sourceText(entry))
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            Spacer()
+
+            Button(action: onRevert) {
+                if isRestoring {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.title3.weight(.semibold))
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(.white)          // ← white icon
+                        .padding(6)                       // comfy tap area
+                }
+            }
+            .buttonStyle(.plain)
+            .opacity(canRevert(entry) ? 1 : 0.35)
+            .disabled(!canRevert(entry) || isRestoring)
+        }
+        .padding(12)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: r, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: r).stroke(.white.opacity(0.15), lineWidth: 1))
+        .overlay(BrickOverlay().blendMode(.overlay))
+        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+    }
+
+    private func canRevert(_ e: RemovalEntry) -> Bool {
+        switch e.source {
+        case .liked: return e.trackID != nil
+        case .playlist: return e.playlistID != nil && e.trackURI != nil
+        }
+    }
+    private func sourceText(_ e: RemovalEntry) -> String {
+        switch e.source {
+        case .liked: return "Removed from Liked Songs"
+        case .playlist: return "Removed from \(e.playlistName ?? "Playlist")"
+        }
+    }
 }
