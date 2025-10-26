@@ -15,222 +15,150 @@ struct SwipeCard: View {
     @State private var offset: CGSize = .zero
     @GestureState private var isDragging = false
 
-    // Preview / playback state
+    // Playback
     @State private var previewURL: String?
     @State private var isResolvingPreview = false
     @State private var isPlaying = false
-
-    // Waveform state
     @State private var waveform: [Float]? = nil
     @ObservedObject private var player = PreviewPlayer.shared
 
-    // Popularity from cache or inline field
+    // Cached
     private var popularity: Int? {
         if let id = track.id, let cached = api.trackPopularity[id] { return cached }
         return track.popularity
+    }
+    private var primaryArtistID: String? { track.artists.first?.id }
+    private var genreChips: [String] {
+        guard let aid = primaryArtistID,
+              let genres = api.artistGenres[aid], !genres.isEmpty
+        else { return [] }
+        return Array(genres.prefix(3))
     }
 
     private var previewKey: String {
         track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
     }
 
-    private var primaryArtistID: String? { track.artists.first?.id }
-
-    private var genreChips: [String] {
-        guard let aid = primaryArtistID,
-              let genres = api.artistGenres[aid], !genres.isEmpty
-        else { return [] }
-        return Array(genres.prefix(2))
-    }
+    private var dragTilt: Double { Double(offset.width) / 22 }
+    private var dragLift: CGFloat { 8 + min(18, abs(offset.width) / 12) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // ARTWORK
-            RemoteImage(url: track.album.images?.first?.url)
-                .frame(height: 260)
-                .clipped()
-                .cornerRadius(14)
-                .overlay {
-                    if isResolvingPreview && previewURL == nil {
-                        ProgressView()
-                            .padding(10)
-                            .background(.ultraThinMaterial, in: Circle())
+        GeometryReader { geo in
+            let cardWidth = min(geo.size.width - 24, 560)
+
+            VStack(spacing: 12) {
+                // === ALBUM ART ===
+                RemoteImage(url: track.album.images?.first?.url)
+                    .frame(height: 260)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(.white.opacity(0.18), lineWidth: 1)
+                    )
+                    .overlay {
+                        if isResolvingPreview && previewURL == nil {
+                            ProgressView().padding(10)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
                     }
+
+                // === INFO TILE — now takes full card width ===
+                BrickTile {
+                    InfoBlock(
+                        track: track,
+                        genreChips: genreChips,
+                        addedInfoLine: addedInfoLine
+                    )
+                }
+                .frame(maxWidth: .infinity)
+
+                // === POPULARITY TILE ===
+                if let pop = popularity {
+                    BrickTile {
+                        VStack(alignment: .leading, spacing: 8) {
+                            MetaRow(system: "chart.bar.fill", text: "Spotify popularity")
+                            PopularityBar(value: Double(pop) / 100.0)
+                                .frame(height: 6)
+                            Text("\(pop)")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
 
-            // TRACK INFO + Share
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(track.name)
-                        .font(.title3).bold().lineLimit(2)
+                BrickSeparator()
 
-                    if let shareURL = shareURL {
-                        Spacer(minLength: 6)
-                        ShareLink(item: shareURL) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 16, weight: .semibold))
-                                .padding(6)
-                                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                // === PLAYER ===
+                if let url = previewURL {
+                    HStack(spacing: 12) {
+                        Button {
+                            if isPlaying { stopPlayback() }
+                            else { PreviewPlayer.shared.play(url); isPlaying = true }
+                        } label: {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.black)
+                                .frame(width: 32, height: 32)
+                                .background(.white, in: Circle())
+                                .overlay(Circle().stroke(.white, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Share")
-                    }
-                }
 
-                Text(track.artists.map { $0.name }.joined(separator: ", "))
-                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-
-                // Genres chips
-                let chips = genreChips
-                if !chips.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(chips, id: \.self) { g in
-                            Text(g.capitalized)
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 3)
-                                .background(.white.opacity(0.12), in: Capsule())
-                                .foregroundStyle(.white)
-                        }
-                    }
-                }
-
-                // Popularity badge + tiny meter
-                if let pop = popularity {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chart.bar.fill")
-                                .font(.caption2)
-                            Text("Popularity \(pop)")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .foregroundStyle(.white.opacity(0.9))
-
-                        PopularityBar(value: Double(pop) / 100.0)
-                            .frame(height: 6)
-                    }
-                    .padding(.top, 2)
-                }
-
-                Text(albumLine)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-
-                if let info = addedInfoLine {
-                    Text(info).font(.caption2).foregroundStyle(.secondary)
-                }
-
-                if isDuplicate {
-                    Label("Duplicate in this playlist", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2).foregroundStyle(.yellow).padding(.top, 2)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            // PLAYER STRIP — only shown when a preview is available
-            if let url = previewURL {
-                HStack(spacing: 12) {
-                    Button {
-                        if isPlaying {
-                            stopPlayback()
+                        if let wf = waveform {
+                            ScrollingWaveform(samples: wf, progress: player.progress, height: 26)
+                                .opacity(isPlaying ? 1 : 0.9)
                         } else {
-                            PreviewPlayer.shared.play(url)
-                            isPlaying = true
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(.white.opacity(0.12))
+                                .frame(height: 26)
+                                .overlay(ProgressView().scaleEffect(0.7))
                         }
-                    } label: {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.black)
-                            .frame(width: 34, height: 34)
-                            .background(.white, in: Circle())
-                            .shadow(radius: 2, y: 1)
                     }
-                    .buttonStyle(.plain)
-
-                    if let wf = waveform {
-                        ScrollingWaveform(
-                            samples: wf,
-                            progress: player.progress,
-                            height: 26
-                        )
-                        .opacity(isPlaying ? 1 : 0.9)
-                    } else {
-                        RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.25))
-                            .frame(height: 26)
-                            .overlay(ProgressView().scaleEffect(0.8))
+                    .padding(.vertical, 8)
+                }
+            }
+            .padding(16)
+            .background(
+                CardChromeBW()
+                    .overlay(BrickOverlay().blendMode(.overlay))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .frame(width: cardWidth)
+            .rotation3DEffect(.degrees(dragTilt), axis: (x: 0, y: 1, z: 0))
+            .shadow(color: .black.opacity(0.55), radius: dragLift, y: 6)
+            .offset(x: offset.width, y: offset.height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .gesture(
+                DragGesture()
+                    .updating($isDragging) { _, s, _ in s = true }
+                    .onChanged { value in offset = value.translation }
+                    .onEnded { value in
+                        if value.translation.width > 120 { animateSwipe(.right) }
+                        else if value.translation.width < -120 { animateSwipe(.left) }
+                        else { withAnimation(.spring) { offset = .zero } }
                     }
-                }
-                .padding(.vertical, 10)
-                .glassyPanel(corner: 14)
+            )
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
+            .task(id: track.id ?? track.uri ?? track.name) { await resolvePreviewIfNeeded() }
+            .task(id: primaryArtistID) {
+                if let aid = primaryArtistID { await api.ensureArtistGenres(for: [aid], auth: auth) }
             }
-        }
-        .padding()
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(radius: 6)
-
-        // swipe affordances
-        .overlay(alignment: .topLeading) { label("KEEP", .green).opacity(offset.width > 60 ? 1 : 0) }
-        .overlay(alignment: .topTrailing) { label("REMOVE", .red).opacity(offset.width < -60 ? 1 : 0) }
-        .rotationEffect(.degrees(Double(offset.width / 20)))
-        .offset(x: offset.width, y: offset.height)
-        .gesture(
-            DragGesture()
-                .updating($isDragging) { _, s, _ in s = true }
-                .onChanged { value in offset = value.translation }
-                .onEnded { value in
-                    if value.translation.width > 120 { animateSwipe(.right) }
-                    else if value.translation.width < -120 { animateSwipe(.left) }
-                    else { withAnimation(.spring) { offset = .zero } }
-                }
-        )
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
-
-        // Load preview + waveform (silent if missing)
-        .task(id: track.id ?? track.uri ?? track.name) { await resolvePreviewIfNeeded() }
-
-        // Ensure artist genres (by ID)
-        .task(id: primaryArtistID) {
-            if let aid = primaryArtistID {
-                await api.ensureArtistGenres(for: [aid], auth: auth)
+            .task(id: track.id) {
+                if let id = track.id { await api.ensureTrackPopularity(for: [id], auth: auth) }
             }
+            .onDisappear { stopPlayback() }
         }
-
-        // Ensure popularity for this track (lazy)
-        .task(id: track.id) {
-            if let id = track.id {
-                await api.ensureTrackPopularity(for: [id], auth: auth)
-            }
-        }
-
-        .onDisappear { stopPlayback() }
     }
 
-    // MARK: Helpers -----------------------------------------------------------
-
-    private var albumLine: String {
-        let year = (track.album.release_date ?? "").prefix(4)
-        return year.isEmpty ? track.album.name : "\(track.album.name) • \(year)"
-    }
+    // MARK: - Helpers
 
     private var addedInfoLine: String? {
         let added = addedAt?.prefix(10) ?? ""
         if let by = addedBy, !by.isEmpty { return "Added by \(by)\(added.isEmpty ? "" : " • \(added)")" }
         if !added.isEmpty { return "Added \(added)" }
         return nil
-    }
-
-    private var shareURL: URL? {
-        guard let s = track.spotifyURLString, let u = URL(string: s) else { return nil }
-        return u
-    }
-
-    @ViewBuilder func label(_ text: String, _ color: Color) -> some View {
-        Text(text).font(.caption).bold()
-            .padding(6)
-            .background(color.opacity(0.85))
-            .foregroundStyle(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(10)
     }
 
     private func animateSwipe(_ dir: SwipeDirection) {
@@ -242,6 +170,7 @@ struct SwipeCard: View {
             onSwipe(dir)
             offset = .zero
         }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     private func stopPlayback() {
@@ -251,44 +180,152 @@ struct SwipeCard: View {
         }
     }
 
-    // --- Resolve Spotify/Deezer preview + waveform (no toast) ---------------
     private func resolvePreviewIfNeeded() async {
         let key = previewKey
 
-        // 0) Spotify preview if present
         if let s = track.preview_url {
             previewURL = s
             Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: s) }
             return
         }
-
-        // 1) App-level cache (validate before use)
         if let cached = api.previewMap[key] {
             if let ok = await DeezerPreviewService.shared.validatePreview(urlString: cached, trackKey: key, track: track) {
                 previewURL = ok
-                await MainActor.run { api.previewMap[key] = ok }
+                _ = await MainActor.run { api.previewMap[key] = ok }
                 Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: ok) }
                 return
             } else {
-                await MainActor.run { api.previewMap.removeValue(forKey: key) }
+                _ = await MainActor.run { api.previewMap.removeValue(forKey: key) }
             }
         }
 
         isResolvingPreview = true
         defer { isResolvingPreview = false }
 
-        // 2) Deezer resolve
         if let deezer = await DeezerPreviewService.shared.resolvePreview(for: track) {
             previewURL = deezer
-            await MainActor.run { api.previewMap[key] = deezer }
+            _ = await MainActor.run { api.previewMap[key] = deezer }
             Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: deezer) }
         }
     }
 }
 
-// Tiny meter view (inline for convenience)
+// MARK: - Mosaic pieces
+
+private struct InfoBlock: View {
+    let track: Track
+    let genreChips: [String]
+    let addedInfoLine: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(track.name)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+
+                if track.explicit == true {
+                    Image(systemName: "e.square.fill")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.white.opacity(0.12), in: Capsule())
+                        .accessibilityLabel("Explicit")
+                }
+            }
+
+            Text(track.artists.map { $0.name }.joined(separator: ", "))
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
+
+            let albumName = track.album.name
+            if !albumName.isEmpty {
+                Text(albumSubtitle(from: albumName, date: track.album.release_date))
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+
+            if !genreChips.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(genreChips, id: \.self) { g in
+                        Pill(text: g.capitalized)
+                    }
+                }
+                .padding(.top, 2)
+            }
+
+            if let info = addedInfoLine {
+                MetaRow(system: "clock", text: info)
+            }
+        }
+    }
+
+    private func albumSubtitle(from name: String, date: String?) -> String {
+        let year = (date ?? "").prefix(4)
+        return year.isEmpty ? name : "\(name) • \(year)"
+    }
+}
+
+/// Brick-styled tile container
+private struct BrickTile<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        // ⤵️ Force the *content* to expand to the parent/card width first,
+        // then apply padding + background so the tile doesn’t hug inner text.
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.15), lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Reusable bits
+
+private struct MetaRow: View {
+    let system: String
+    let text: String
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: system).font(.caption2).foregroundStyle(.white)
+            Text(text).font(.caption).lineLimit(1)
+        }
+        .foregroundStyle(.white.opacity(0.85))
+    }
+}
+
+private struct Pill: View {
+    var text: String
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .overlay(Capsule().stroke(.white.opacity(0.85), lineWidth: 1))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+    }
+}
+
+private struct CardChromeBW: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.black)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(.white.opacity(0.18), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.6), radius: 12, y: 6)
+    }
+}
+
 private struct PopularityBar: View {
-    let value: Double // 0...1
+    let value: Double
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
@@ -300,6 +337,62 @@ private struct PopularityBar: View {
             }
         }
         .frame(height: 6)
-        .accessibilityLabel("Popularity")
+    }
+}
+
+private struct BrickSeparator: View {
+    var height: CGFloat = 8
+    var body: some View {
+        Rectangle()
+            .fill(.clear)
+            .frame(height: height)
+            .overlay(
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    let brick = 28.0
+                    let gap = 10.0
+                    HStack(spacing: gap) {
+                        ForEach(0..<Int(ceil(w / (brick + gap))), id: \.self) { _ in
+                            Rectangle().fill(.white.opacity(0.22)).frame(width: brick, height: 1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .offset(y: (height - 1) / 2)
+                }
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+private struct BrickOverlay: View {
+    var lineWidth: CGFloat = 1
+    var rowHeight: CGFloat = 44
+    var columnWidth: CGFloat = 88
+    var opacity: CGFloat = 0.10
+
+    var body: some View {
+        GeometryReader { _ in
+            Canvas { ctx, size in
+                let hLines = stride(from: 0.0, through: size.height, by: rowHeight)
+                for (i, y) in hLines.enumerated() {
+                    var path = Path()
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: size.width, y: y))
+                    ctx.stroke(path, with: .color(.white.opacity(opacity)), lineWidth: lineWidth)
+
+                    let offset = (i % 2 == 0) ? 0.0 : columnWidth / 2
+                    var x = -offset
+                    while x <= size.width + columnWidth {
+                        var v = Path()
+                        v.move(to: CGPoint(x: x, y: y))
+                        v.addLine(to: CGPoint(x: x, y: min(y + rowHeight, size.height)))
+                        ctx.stroke(v, with: .color(.white.opacity(opacity * 0.9)), lineWidth: 0.8)
+                        x += columnWidth
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
