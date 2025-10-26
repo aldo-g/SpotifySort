@@ -48,10 +48,9 @@ struct SortView: View {
                                     track: tr,
                                     addedAt: item.added_at,
                                     addedBy: item.added_by?.id,
-                                    isDuplicate: isDuplicate(trackID: tr.id)
-                                ) { dir in
-                                    onSwipe(direction: dir, item: item)
-                                }
+                                    isDuplicate: isDuplicate(trackID: tr.id),
+                                    onSwipe: { dir in onSwipe(direction: dir, item: item) }
+                                )
                                 .padding(.horizontal, 16)
                                 .zIndex(item.id == deck[topIndex].id ? 1 : 0)
                             }
@@ -65,6 +64,9 @@ struct SortView: View {
         .selectrToolbar()
         .navigationBarBackButtonHidden(true)
         .navigationTitle("")
+        .toolbarBackground(.hidden, for: .navigationBar)   // 👈 hides the default blur/material
+        .toolbarBackground(.clear, for: .navigationBar)
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
             // Title dropdown
             ToolbarItem(placement: .principal) {
@@ -88,6 +90,7 @@ struct SortView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showHistory = true } label: {
                     Image(systemName: "clock.arrow.circlepath")
+                        .foregroundStyle(.white)
                 }
                 .accessibilityLabel("History")
             }

@@ -72,6 +72,19 @@ final class HistoryStore: ObservableObject {
         persist()
     }
 
+    /// Remove a single entry by id (used after successful Revert).
+    func remove(id: UUID) {
+        entries.removeAll { $0.id == id }
+        persist()
+    }
+
+    /// Remove many entries at once, if ever needed.
+    func removeBatch(ids: [UUID]) {
+        let set = Set(ids)
+        entries.removeAll { set.contains($0.id) }
+        persist()
+    }
+
     private func persist() {
         if let data = try? encoder.encode(entries) {
             UserDefaults.standard.set(data, forKey: key)

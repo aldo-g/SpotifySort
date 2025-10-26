@@ -53,10 +53,9 @@ struct SortLikedView: View {
                                     track: tr,
                                     addedAt: item.added_at,
                                     addedBy: item.added_by?.id,
-                                    isDuplicate: false
-                                ) { dir in
-                                    onSwipe(direction: dir, item: item)
-                                }
+                                    isDuplicate: false,
+                                    onSwipe: { dir in onSwipe(direction: dir, item: item) }
+                                )
                                 .padding(.horizontal, 16)
                                 .zIndex(item.id == deck[topIndex].id ? 1 : 0)
                             }
@@ -70,6 +69,9 @@ struct SortLikedView: View {
         .selectrToolbar()
         .navigationBarBackButtonHidden(true)
         .navigationTitle("")
+        .toolbarBackground(.hidden, for: .navigationBar)   // 👈 hides the default blur/material
+        .toolbarBackground(.clear, for: .navigationBar)
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
             // Title dropdown
             ToolbarItem(placement: .principal) {
@@ -93,6 +95,7 @@ struct SortLikedView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showHistory = true } label: {
                     Image(systemName: "clock.arrow.circlepath")
+                        .foregroundStyle(.white)
                 }
                 .accessibilityLabel("History")
             }

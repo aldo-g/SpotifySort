@@ -19,6 +19,11 @@ struct SwipeCard: View {
     @State private var isResolvingPreview = false
     @State private var isPlaying = false
 
+    // Waveform state
+    @State private var waveform: [Float]? = nil
+    @ObservedObject private var waveStore = WaveformStore.shared
+    @ObservedObject private var player = PreviewPlayer.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // ARTWORK
@@ -27,7 +32,6 @@ struct SwipeCard: View {
                 .clipped()
                 .cornerRadius(14)
                 .overlay {
-                    // small spinner while we resolve a preview (optional)
                     if isResolvingPreview && previewURL == nil {
                         ProgressView()
                             .padding(10)
@@ -68,13 +72,12 @@ struct SwipeCard: View {
 
             Spacer(minLength: 0)
 
-            // PLAYER STRIP — sits in the empty space at the BOTTOM of the card
+            // PLAYER STRIP — only shown when a preview is available
             if let url = previewURL {
                 HStack(spacing: 12) {
                     Button {
                         if isPlaying {
-                            PreviewPlayer.shared.stop()
-                            isPlaying = false
+                            stopPlayback()
                         } else {
                             PreviewPlayer.shared.play(url)
                             isPlaying = true
@@ -89,13 +92,21 @@ struct SwipeCard: View {
                     }
                     .buttonStyle(.plain)
 
-                    ScrollingWaveform()
-                        .frame(height: 26)
-                        .opacity(isPlaying ? 1 : 0.55)
-                        .accessibilityHidden(true)
+                    if let wf = waveform {
+                        ScrollingWaveform(
+                            samples: wf,
+                            progress: player.progress,
+                            height: 26
+                        )
+                        .opacity(isPlaying ? 1 : 0.9)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.25))
+                            .frame(height: 26)
+                            .overlay(ProgressView().scaleEffect(0.8))
+                    }
                 }
                 .padding(.vertical, 10)
-                .glassyPanel(corner: 14) // from Theme.swift – gives a nice “glass” dock
+                .glassyPanel(corner: 14)
             }
         }
         .padding()
@@ -119,12 +130,12 @@ struct SwipeCard: View {
                 }
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
+
+        // Load preview + waveform
         .task(id: track.id ?? track.uri ?? track.name) { await resolvePreviewIfNeeded() }
+
         .onDisappear {
-            if isPlaying {
-                PreviewPlayer.shared.stop()
-                isPlaying = false
-            }
+            stopPlayback()
         }
     }
 
@@ -152,7 +163,7 @@ struct SwipeCard: View {
     }
 
     private func animateSwipe(_ dir: SwipeDirection) {
-        if isPlaying { PreviewPlayer.shared.stop(); isPlaying = false }
+        stopPlayback()
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
             offset = CGSize(width: dir == .right ? 800 : -800, height: 0)
         }
@@ -162,25 +173,45 @@ struct SwipeCard: View {
         }
     }
 
-    // --- Resolve Spotify/Deezer preview -------------------------------------
+    private func stopPlayback() {
+        if isPlaying {
+            PreviewPlayer.shared.stop()
+            isPlaying = false
+        }
+    }
+
+    // --- Resolve Spotify/Deezer preview + waveform --------------------------
     private func resolvePreviewIfNeeded() async {
         let key = track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
 
+        // 0) Spotify preview if present
         if let s = track.preview_url {
             previewURL = s
+            Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: s) }
             return
         }
+
+        // 1) App-level cache
         if let cached = api.previewMap[key] {
             previewURL = cached
+            Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: cached) }
             return
         }
 
         isResolvingPreview = true
-        defer { isResolvingPreview = false }
+        defer {
+            isResolvingPreview = false
+            // Optional toast to inform user quietly
+            if previewURL == nil {
+                ToastCenter.shared.show("No preview available")
+            }
+        }
 
+        // 2) Deezer resolve
         if let deezer = await DeezerPreviewService.shared.resolvePreview(for: track) {
             previewURL = deezer
             await MainActor.run { api.previewMap[key] = deezer }
+            Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: deezer) }
         }
     }
 }

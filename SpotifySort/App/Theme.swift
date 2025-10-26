@@ -21,6 +21,48 @@ extension Color {
     }
 }
 
+// MARK: - Toast (global, unobtrusive)
+
+@MainActor
+final class ToastCenter: ObservableObject {
+    static let shared = ToastCenter()
+    @Published var message: String? = nil
+
+    private var hideWorkItem: DispatchWorkItem?
+
+    func show(_ text: String, duration: Double = 1.8) {
+        hideWorkItem?.cancel()
+        message = text
+
+        let work = DispatchWorkItem { [weak self] in
+            withAnimation(.easeInOut(duration: 0.2)) { self?.message = nil }
+        }
+        hideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+    }
+}
+
+struct ToastHost: View {
+    @ObservedObject private var toast = ToastCenter.shared
+
+    var body: some View {
+        Group {
+            if let msg = toast.message {
+                Text(msg)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.white, in: Capsule())
+                    .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityAddTraits(.isStaticText)
+            }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.9), value: toast.message)
+    }
+}
+
 // MARK: - Shared backgrounds & modifiers
 
 struct SelectrBackground<Content: View>: View {
@@ -32,6 +74,9 @@ struct SelectrBackground<Content: View>: View {
                            endPoint: .bottomTrailing)
                 .ignoresSafeArea()
             content
+            // Toast sits above, bottom-center, auto-dismisses
+            VStack { Spacer(); ToastHost().padding(.bottom, 24) }
+                .allowsHitTesting(false)
         }
     }
 }

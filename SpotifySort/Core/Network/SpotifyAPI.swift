@@ -156,7 +156,7 @@ final class SpotifyAPI: ObservableObject {
         return (items, page.next)
     }
 
-    // MARK: - Mutations
+    // MARK: - Mutations (remove)
 
     func batchRemoveTracks(playlistID: String, uris: [String], auth: AuthManager) async throws {
         guard !uris.isEmpty else { return }
@@ -184,6 +184,40 @@ final class SpotifyAPI: ObservableObject {
                   var req = authorizedRequest(url.absoluteString, auth: auth, method: "DELETE")
             else { continue }
             req.setValue(nil, forHTTPHeaderField: "Content-Type")
+            _ = try await URLSession.shared.data(for: req)
+        }
+    }
+
+    // MARK: - Mutations (restore / add)  ✅ NEW
+
+    /// Re-add saved tracks to the user's library.
+    func batchSaveTracks(trackIDs: [String], auth: AuthManager) async throws {
+        guard !trackIDs.isEmpty else { return }
+        for chunk in trackIDs.chunked(into: 50) {
+            let ids = chunk.joined(separator: ",")
+            guard var comps = URLComponents(string: "https://api.spotify.com/v1/me/tracks")
+            else { continue }
+            comps.queryItems = [URLQueryItem(name: "ids", value: ids)]
+            guard let url = comps.url,
+                  var req = authorizedRequest(url.absoluteString, auth: auth, method: "PUT")
+            else { continue }
+            req.setValue(nil, forHTTPHeaderField: "Content-Type")
+            _ = try await URLSession.shared.data(for: req)
+        }
+    }
+
+    /// Add tracks to a playlist by Spotify URI.
+    func batchAddTracks(playlistID: String, uris: [String], auth: AuthManager) async throws {
+        guard !uris.isEmpty else { return }
+        for chunk in uris.chunked(into: 90) {
+            let body = ["uris": chunk]
+            let data = try JSONSerialization.data(withJSONObject: body)
+            guard let req = authorizedRequest(
+                "https://api.spotify.com/v1/playlists/\(playlistID)/tracks",
+                auth: auth,
+                method: "POST",
+                body: data
+            ) else { continue }
             _ = try await URLSession.shared.data(for: req)
         }
     }

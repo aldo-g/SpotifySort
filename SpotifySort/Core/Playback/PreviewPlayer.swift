@@ -1,69 +1,77 @@
 import AVFoundation
 import Combine
+import UIKit
 
 @MainActor
 final class PreviewPlayer: ObservableObject {
     static let shared = PreviewPlayer()
 
-    // 20-band simplified “sound profile” for UI visualizer
+    // 20-band levels (kept for potential future visualizers)
     @Published var levels: [Float] = Array(repeating: 0, count: 20)
+
+    // Playback progress (0...1) for the waveform fill
+    @Published var progress: Double = 0
 
     private var engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
     private var currentTask: Task<Void, Never>?
     private var currentTempURL: URL?
 
+    private var durationSeconds: Double = 0
+    private var displayLink: CADisplayLink?
+
     // MARK: - Public API
 
-    /// Stream + play a 30s preview from a remote URL.
     func play(_ urlString: String) {
-        guard let remoteURL = URL(string: urlString) else { return }
+        guard let remoteURL = URL(string: urlString) else {
+            ToastCenter.shared.show("No preview available")
+            return
+        }
         stop() // stop anything currently playing and clean up
 
         currentTask = Task.detached { [weak self] in
             guard let self else { return }
             do {
-                // Audio session must be touched on main actor.
+                // Configure audio session on main actor.
                 try await MainActor.run {
                     let session = AVAudioSession.sharedInstance()
                     try session.setCategory(.playback, mode: .default, options: [])
                     try session.setActive(true)
                 }
 
-                // Plain download
+                // Download
                 let (data, resp) = try await URLSession.shared.data(from: remoteURL)
                 if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     print("Preview HTTP error:", http.statusCode, "host=\(remoteURL.host ?? "?")")
+                    await MainActor.run { ToastCenter.shared.show("No preview available") }
                     return
                 }
 
-                // Sniff content before we hand to AVAudioFile (prevents 1685348671).
+                // Quick sniff to avoid AVAudioFile errors on non-audio bodies
                 guard Self.looksLikeMP3(data) else {
                     let head = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
                     print("Preview not MP3 (host=\(remoteURL.host ?? "?")). First bytes:", head)
+                    await MainActor.run { ToastCenter.shared.show("No preview available") }
                     return
                 }
 
-                // Unique temp file per play to avoid write/read races.
-                let tmp = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("preview-\(UUID().uuidString).mp3")
+                // Unique temp file per play
+                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("preview-\(UUID().uuidString).mp3")
                 try data.write(to: tmp, options: .atomic)
-
-                // Track for cleanup on stop()
                 await MainActor.run { self.currentTempURL = tmp }
 
-                // Decode + start engine on main actor.
+                // Decode + start engine on main actor
                 let file = try AVAudioFile(forReading: tmp)
                 try await MainActor.run { self.startEngine(with: file) }
             } catch is CancellationError {
-                // Stopped before completion — nothing to log.
+                // Stopped before completion
             } catch {
                 print("Preview load error:", error)
+                await MainActor.run { ToastCenter.shared.show("No preview available") }
             }
         }
     }
 
-    /// Stop playback and tear down resources.
     func stop() {
         currentTask?.cancel()
         currentTask = nil
@@ -72,15 +80,15 @@ final class PreviewPlayer: ObservableObject {
         engine.mainMixerNode.removeTap(onBus: 0)
         engine.stop()
 
-        // Deactivate the audio session (don’t worry if it was inactive).
-        do {
-            try AVAudioSession.sharedInstance()
-                .setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {
-            // Ignore
-        }
+        stopDisplayLink()
+        progress = 0
 
-        // Remove temp file if any.
+        // Deactivate session
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        } catch { /* ignore */ }
+
+        // Cleanup temp file
         if let url = currentTempURL {
             try? FileManager.default.removeItem(at: url)
             currentTempURL = nil
@@ -90,14 +98,13 @@ final class PreviewPlayer: ObservableObject {
     // MARK: - Engine setup
 
     private func startEngine(with file: AVAudioFile) {
-        // Fresh engine every time.
         engine = AVAudioEngine()
         player = AVAudioPlayerNode()
 
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
 
-        // Tap for amplitude analysis to drive the UI bars.
+        // Tap to keep levels updated (optional; cheap)
         engine.mainMixerNode.installTap(onBus: 0, bufferSize: 512, format: file.processingFormat) { [weak self] buf, _ in
             self?.processBuffer(buf)
         }
@@ -106,9 +113,13 @@ final class PreviewPlayer: ObservableObject {
             try engine.start()
             player.scheduleFile(file, at: nil)
             player.play()
+
+            durationSeconds = Double(file.length) / file.processingFormat.sampleRate
+            startDisplayLink()
             print("✅ Preview playing")
         } catch {
             print("Audio engine start failed:", error)
+            ToastCenter.shared.show("No preview available")
         }
     }
 
@@ -142,31 +153,39 @@ final class PreviewPlayer: ObservableObject {
         DispatchQueue.main.async { self.levels = newLevels }
     }
 
-    // MARK: - Data sniffing (actor-independent)
+    // MARK: - Progress (CADisplayLink)
 
-    /// Pure function; mark nonisolated so it can be called from detached tasks without `await`.
+    private func startDisplayLink() {
+        stopDisplayLink()
+        displayLink = CADisplayLink(target: self, selector: #selector(tick))
+        displayLink?.add(to: .main, forMode: .common)
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func tick() {
+        guard durationSeconds > 0 else { progress = 0; return }
+        if let nodeTime = player.lastRenderTime,
+           let pTime = player.playerTime(forNodeTime: nodeTime) {
+            let t = Double(pTime.sampleTime) / pTime.sampleRate
+            progress = min(max(t / durationSeconds, 0), 1)
+        }
+    }
+
+    // MARK: - Data sniffing
+
+    /// Pure; callable from detached tasks without await.
     nonisolated(unsafe) static func looksLikeMP3(_ data: Data) -> Bool {
         guard data.count > 256 else { return false }
-
-        // ID3 tag header (common)
-        if data.starts(with: Data([0x49, 0x44, 0x33])) { // "ID3"
-            return true
-        }
-
-        // MPEG audio frame sync (0xFFE..)
+        if data.starts(with: Data([0x49, 0x44, 0x33])) { return true } // "ID3"
         let b0 = data[0], b1 = data[1]
-        if b0 == 0xFF && (b1 & 0xE0) == 0xE0 {
-            return true
-        }
-
-        // Obvious non-audio beginnings — rule out early
-        if data.starts(with: Data([0x3C, 0x68, 0x74, 0x6D, 0x6C])) { // "<html"
-            return false
-        }
-        if data.starts(with: Data([0x7B, 0x22])) { // JSON "{"
-            return false
-        }
-
+        if b0 == 0xFF && (b1 & 0xE0) == 0xE0 { return true }          // MPEG frames
+        if data.starts(with: Data([0x3C, 0x74, 0x6D, 0x6C])) { return false } // "<tml" (loose)
+        if data.starts(with: Data([0x3C, 0x68, 0x74, 0x6D, 0x6C])) { return false } // "<html"
+        if data.starts(with: Data([0x7B, 0x22])) { return false }     // JSON
         return false
     }
 }
