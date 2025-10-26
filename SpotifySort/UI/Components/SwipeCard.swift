@@ -134,9 +134,9 @@ struct SwipeCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(16)
         .background(
-            CardChromeBW()
-                .overlay(BrickOverlay().blendMode(.overlay))
-        )
+                    CardPatternBackground(artURL: track.album.images?.first?.url, cornerRadius: 18)
+                        .overlay(BrickOverlay().blendMode(.overlay))
+                )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .frame(width: targetWidth, height: targetHeight)       // <- UNIFORM SIZE
         .rotation3DEffect(.degrees(dragTilt), axis: (x: 0, y: 1, z: 0))
