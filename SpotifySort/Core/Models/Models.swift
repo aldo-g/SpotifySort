@@ -24,7 +24,6 @@ struct PlaylistTrack: Codable, Hashable, Identifiable {
     var track: Track?
     private let uuid = UUID()
     var id: String { uuid.uuidString }
-
     private enum CodingKeys: String, CodingKey { case added_at, added_by, track }
 }
 
@@ -44,15 +43,11 @@ struct Track: Codable, Hashable {
     var popularity: Int?
     var is_playable: Bool?
 
-    // NEW: shareable link holder from API response
-    var external_urls: [String: String]?   // e.g. ["spotify": "https://open.spotify.com/track/..."]
-
     // For Deezer preview lookup
     var isrc: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, uri, artists, album, type, preview_url, explicit, duration_ms, popularity, is_playable
-        case external_urls
         case external_ids
     }
     enum ExternalIDsKeys: String, CodingKey { case isrc }
@@ -70,7 +65,6 @@ struct Track: Codable, Hashable {
         duration_ms  = try? c.decode(Int.self, forKey: .duration_ms)
         popularity   = try? c.decode(Int.self, forKey: .popularity)
         is_playable  = try? c.decode(Bool.self, forKey: .is_playable)
-        external_urls = try? c.decode([String:String].self, forKey: .external_urls)
 
         if let ext = try? c.nestedContainer(keyedBy: ExternalIDsKeys.self, forKey: .external_ids) {
             isrc = try? ext.decode(String.self, forKey: .isrc)
@@ -92,8 +86,6 @@ struct Track: Codable, Hashable {
         try c.encodeIfPresent(duration_ms, forKey: .duration_ms)
         try c.encodeIfPresent(popularity, forKey: .popularity)
         try c.encodeIfPresent(is_playable, forKey: .is_playable)
-        try c.encodeIfPresent(external_urls, forKey: .external_urls)
-        // intentionally NOT encoding external_ids or isrc
     }
 
     init(
@@ -108,7 +100,6 @@ struct Track: Codable, Hashable {
         duration_ms: Int? = nil,
         popularity: Int? = nil,
         is_playable: Bool? = nil,
-        external_urls: [String:String]? = nil,
         isrc: String? = nil
     ) {
         self.id = id
@@ -122,12 +113,11 @@ struct Track: Codable, Hashable {
         self.duration_ms = duration_ms
         self.popularity = popularity
         self.is_playable = is_playable
-        self.external_urls = external_urls
         self.isrc = isrc
     }
 }
 
-// NOW includes optional id (used to fetch genres)
+// ✅ Add `id` so we can fetch genres by artist ID from Spotify
 struct Artist: Codable, Hashable {
     let id: String?
     let name: String
@@ -139,13 +129,10 @@ struct Album: Codable, Hashable {
     let release_date: String?
 }
 
-// MARK: - Convenience
-
+// Small helper to build a share URL
 extension Track {
-    /// Best-effort share URL for Spotify.
     var spotifyURLString: String? {
-        if let s = external_urls?["spotify"] { return s }
-        if let id { return "https://open.spotify.com/track/\(id)" }
-        return nil
+        guard let id = id else { return nil }
+        return "https://open.spotify.com/track/\(id)"
     }
 }

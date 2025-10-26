@@ -1,20 +1,16 @@
-// SpotifySort/Core/Network/SpotifyAPI.swift
 import Foundation
 
 @MainActor
 final class SpotifyAPI: ObservableObject {
-    // MARK: - Published state
     @Published var user: SpotifyUser?
     @Published var playlists: [Playlist] = []
 
-    /// Cache for preview URLs (Spotify/Deezer) keyed by track key (id/uri/name|artist).
+    // Cached preview URLs (Spotify or Deezer)
     @Published var previewMap: [String: String] = [:]
 
-    /// Cache of artist genres keyed by artist ID.
-    @Published var artistGenres: [String: [String]] = [:]
-
-    /// NEW: Cache of track popularity (0–100) keyed by track ID.
-    @Published var trackPopularity: [String: Int] = [:]
+    // Caches for extra metadata we still want
+    @Published var artistGenres: [String: [String]] = [:]   // artistID -> genres
+    @Published var trackPopularity: [String: Int] = [:]     // trackID  -> 0...100
 
     // MARK: - HTTP helper
 
@@ -58,9 +54,7 @@ final class SpotifyAPI: ObservableObject {
             result.append(contentsOf: page.items)
             if let next = page.next, !next.isEmpty {
                 url = next
-            } else {
-                break
-            }
+            } else { break }
         }
         playlists = result.filter { $0.tracks.total > 0 }
     }
@@ -84,9 +78,6 @@ final class SpotifyAPI: ObservableObject {
                 guard var tr = item.track else { return nil }
                 if let t = tr.type, t != "track" { return nil }
                 if tr.uri == nil, let id = tr.id { tr.uri = "spotify:track:\(id)" }
-                // Cache popularity when present
-                if let id = tr.id, let pop = tr.popularity { trackPopularity[id] = pop }
-
                 var copy = item
                 copy.track = tr
                 return copy
@@ -95,12 +86,9 @@ final class SpotifyAPI: ObservableObject {
             all.append(contentsOf: batch)
             if let next = page.next, !next.isEmpty {
                 url = next + "&market=from_token"
-            } else {
-                break
-            }
+            } else { break }
         }
 
-        // Reviewed-last bias + randomized within groups
         let (unreviewed, reviewed) = all.partitioned {
             guard let uri = $0.track?.uri else { return false }
             return !reviewedURIs.contains(uri)
@@ -126,9 +114,6 @@ final class SpotifyAPI: ObservableObject {
                 guard var tr = item.track, let id = tr.id else { return nil }
                 if let t = tr.type, t != "track" { return nil }
                 if tr.uri == nil { tr.uri = "spotify:track:\(id)" }
-                // Cache popularity when present
-                if let pop = tr.popularity { trackPopularity[id] = pop }
-
                 var copy = item
                 copy.track = tr
                 return copy
@@ -164,9 +149,6 @@ final class SpotifyAPI: ObservableObject {
             guard var tr = item.track, let id = tr.id else { return nil }
             if let t = tr.type, t != "track" { return nil }
             if tr.uri == nil { tr.uri = "spotify:track:\(id)" }
-            // Cache popularity when present
-            if let pop = tr.popularity { trackPopularity[id] = pop }
-
             var copy = item
             copy.track = tr
             return copy
@@ -174,7 +156,7 @@ final class SpotifyAPI: ObservableObject {
         return (items, page.next)
     }
 
-    // MARK: - Mutations (remove)
+    // MARK: - Mutations (remove / add / save)
 
     func batchRemoveTracks(playlistID: String, uris: [String], auth: AuthManager) async throws {
         guard !uris.isEmpty else { return }
@@ -206,9 +188,6 @@ final class SpotifyAPI: ObservableObject {
         }
     }
 
-    // MARK: - Mutations (restore / add)
-
-    /// Re-add saved tracks to the user's library.
     func batchSaveTracks(trackIDs: [String], auth: AuthManager) async throws {
         guard !trackIDs.isEmpty else { return }
         for chunk in trackIDs.chunked(into: 50) {
@@ -224,7 +203,6 @@ final class SpotifyAPI: ObservableObject {
         }
     }
 
-    /// Add tracks to a playlist by Spotify URI.
     func batchAddTracks(playlistID: String, uris: [String], auth: AuthManager) async throws {
         guard !uris.isEmpty else { return }
         for chunk in uris.chunked(into: 90) {
@@ -240,70 +218,43 @@ final class SpotifyAPI: ObservableObject {
         }
     }
 
-    // MARK: - Artist Genres
+    // MARK: - Genres & Popularity (caching helpers)
 
-    private struct ArtistFull: Codable { let id: String; let genres: [String] }
-    private struct ArtistsResp: Codable { let artists: [ArtistFull] }
+    /// Ensure artist genres are cached; fetches missing IDs via /v1/artists.
+    func ensureArtistGenres(for artistIDs: [String], auth: AuthManager) async {
+        let missing = artistIDs.filter { artistGenres[$0] == nil }
+        guard !missing.isEmpty else { return }
 
-    /// Batch fetch genres for up to 50 artist IDs and merge into `artistGenres`.
-    func fetchArtistGenres(ids: [String], auth: AuthManager) async throws {
-        guard !ids.isEmpty else { return }
-        for chunk in ids.chunked(into: 50) {
-            let joined = chunk.joined(separator: ",")
-            guard let req = authorizedRequest("https://api.spotify.com/v1/artists?ids=\(joined)", auth: auth)
-            else { continue }
-            let (data, _) = try await URLSession.shared.data(for: req)
-            let resp = try JSONDecoder().decode(ArtistsResp.self, from: data)
-            for a in resp.artists {
-                artistGenres[a.id] = a.genres
+        for chunk in missing.chunked(into: 50) {
+            let ids = chunk.joined(separator: ",")
+            guard let req = authorizedRequest("https://api.spotify.com/v1/artists?ids=\(ids)", auth: auth) else { continue }
+            do {
+                let (data, _) = try await URLSession.shared.data(for: req)
+                struct Resp: Decodable { struct A: Decodable { let id: String; let genres: [String] }; let artists: [A] }
+                let resp = try JSONDecoder().decode(Resp.self, from: data)
+                for a in resp.artists { artistGenres[a.id] = a.genres }
+            } catch {
+                // ignore partial failures
             }
         }
     }
 
-    /// Ensure we have genres for given artist IDs; fetches only the missing ones.
-    func ensureArtistGenres(for ids: [String], auth: AuthManager) async {
-        let missing = ids.filter { artistGenres[$0] == nil }
+    /// Ensure track popularity is cached; fetches missing IDs via /v1/tracks.
+    func ensureTrackPopularity(for trackIDs: [String], auth: AuthManager) async {
+        let missing = trackIDs.filter { trackPopularity[$0] == nil }
         guard !missing.isEmpty else { return }
-        do {
-            try await fetchArtistGenres(ids: missing, auth: auth)
-        } catch {
-            print("Genres fetch failed:", error)
-        }
-    }
 
-    // MARK: - Track Popularity (NEW)
-
-    private struct TracksResp: Codable {
-        struct TrackSlim: Codable {
-            let id: String
-            let popularity: Int?
-        }
-        let tracks: [TrackSlim]
-    }
-
-    /// Batch fetch popularity for up to 50 track IDs and merge into `trackPopularity`.
-    func fetchTrackPopularity(ids: [String], auth: AuthManager) async throws {
-        guard !ids.isEmpty else { return }
-        for chunk in ids.chunked(into: 50) {
-            let joined = chunk.joined(separator: ",")
-            guard let req = authorizedRequest("https://api.spotify.com/v1/tracks?ids=\(joined)", auth: auth)
-            else { continue }
-            let (data, _) = try await URLSession.shared.data(for: req)
-            let resp = try JSONDecoder().decode(TracksResp.self, from: data)
-            for t in resp.tracks {
-                if let pop = t.popularity { trackPopularity[t.id] = pop }
+        for chunk in missing.chunked(into: 50) {
+            let ids = chunk.joined(separator: ",")
+            guard let req = authorizedRequest("https://api.spotify.com/v1/tracks?ids=\(ids)", auth: auth) else { continue }
+            do {
+                let (data, _) = try await URLSession.shared.data(for: req)
+                struct Resp: Decodable { struct T: Decodable { let id: String; let popularity: Int }; let tracks: [T] }
+                let resp = try JSONDecoder().decode(Resp.self, from: data)
+                for t in resp.tracks { trackPopularity[t.id] = t.popularity }
+            } catch {
+                // ignore partial failures
             }
-        }
-    }
-
-    /// Ensure we have popularity cached for given track IDs; fetches only missing.
-    func ensureTrackPopularity(for ids: [String], auth: AuthManager) async {
-        let missing = ids.filter { trackPopularity[$0] == nil }
-        guard !missing.isEmpty else { return }
-        do {
-            try await fetchTrackPopularity(ids: missing, auth: auth)
-        } catch {
-            print("Popularity fetch failed:", error)
         }
     }
 }
@@ -327,3 +278,4 @@ private extension Array {
         return (first, second)
     }
 }
+

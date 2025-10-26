@@ -23,10 +23,6 @@ final class PreviewPlayer: ObservableObject {
     // MARK: - Public API
 
     func play(_ urlString: String) {
-        guard let remoteURL = URL(string: urlString) else {
-            ToastCenter.shared.show("No preview available")
-            return
-        }
         stop() // stop anything currently playing and clean up
 
         currentTask = Task.detached { [weak self] in
@@ -39,21 +35,15 @@ final class PreviewPlayer: ObservableObject {
                     try session.setActive(true)
                 }
 
-                // Download
-                let (data, resp) = try await URLSession.shared.data(from: remoteURL)
+                // Download (fail silently if not reachable)
+                guard let finalURL = URL(string: urlString) else { return }
+                let (data, resp) = try await URLSession.shared.data(from: finalURL)
                 if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    print("Preview HTTP error:", http.statusCode, "host=\(remoteURL.host ?? "?")")
-                    await MainActor.run { ToastCenter.shared.show("No preview available") }
                     return
                 }
 
                 // Quick sniff to avoid AVAudioFile errors on non-audio bodies
-                guard Self.looksLikeMP3(data) else {
-                    let head = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-                    print("Preview not MP3 (host=\(remoteURL.host ?? "?")). First bytes:", head)
-                    await MainActor.run { ToastCenter.shared.show("No preview available") }
-                    return
-                }
+                guard Self.looksLikeMP3(data) else { return }
 
                 // Unique temp file per play
                 let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("preview-\(UUID().uuidString).mp3")
@@ -66,8 +56,7 @@ final class PreviewPlayer: ObservableObject {
             } catch is CancellationError {
                 // Stopped before completion
             } catch {
-                print("Preview load error:", error)
-                await MainActor.run { ToastCenter.shared.show("No preview available") }
+                // Fail silently
             }
         }
     }
@@ -116,10 +105,8 @@ final class PreviewPlayer: ObservableObject {
 
             durationSeconds = Double(file.length) / file.processingFormat.sampleRate
             startDisplayLink()
-            print("✅ Preview playing")
         } catch {
-            print("Audio engine start failed:", error)
-            ToastCenter.shared.show("No preview available")
+            // Silent failure
         }
     }
 
@@ -183,7 +170,7 @@ final class PreviewPlayer: ObservableObject {
         if data.starts(with: Data([0x49, 0x44, 0x33])) { return true } // "ID3"
         let b0 = data[0], b1 = data[1]
         if b0 == 0xFF && (b1 & 0xE0) == 0xE0 { return true }          // MPEG frames
-        if data.starts(with: Data([0x3C, 0x74, 0x6D, 0x6C])) { return false } // "<tml" (loose)
+        if data.starts(with: Data([0x3C, 0x74, 0x6D, 0x6C])) { return false } // "<tml"
         if data.starts(with: Data([0x3C, 0x68, 0x74, 0x6D, 0x6C])) { return false } // "<html"
         if data.starts(with: Data([0x7B, 0x22])) { return false }     // JSON
         return false

@@ -1,4 +1,3 @@
-// SpotifySort/UI/Components/SwipeCard.swift
 import SwiftUI
 
 enum SwipeDirection { case left, right }
@@ -23,13 +22,25 @@ struct SwipeCard: View {
 
     // Waveform state
     @State private var waveform: [Float]? = nil
-    @ObservedObject private var waveStore = WaveformStore.shared
     @ObservedObject private var player = PreviewPlayer.shared
 
-    // ✅ Popularity from cache or inline field
+    // Popularity from cache or inline field
     private var popularity: Int? {
         if let id = track.id, let cached = api.trackPopularity[id] { return cached }
         return track.popularity
+    }
+
+    private var previewKey: String {
+        track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
+    }
+
+    private var primaryArtistID: String? { track.artists.first?.id }
+
+    private var genreChips: [String] {
+        guard let aid = primaryArtistID,
+              let genres = api.artistGenres[aid], !genres.isEmpty
+        else { return [] }
+        return Array(genres.prefix(2))
     }
 
     var body: some View {
@@ -69,8 +80,9 @@ struct SwipeCard: View {
                 Text(track.artists.map { $0.name }.joined(separator: ", "))
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
 
-                // Genres (first artist only, top 1–2 tags)
-                if let chips = genreChips, !chips.isEmpty {
+                // Genres chips
+                let chips = genreChips
+                if !chips.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(chips, id: \.self) { g in
                             Text(g.capitalized)
@@ -82,7 +94,7 @@ struct SwipeCard: View {
                     }
                 }
 
-                // ✅ Popularity (badge + tiny meter)
+                // Popularity badge + tiny meter
                 if let pop = popularity {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
@@ -114,12 +126,16 @@ struct SwipeCard: View {
 
             Spacer(minLength: 0)
 
-            // PLAYER STRIP
+            // PLAYER STRIP — only shown when a preview is available
             if let url = previewURL {
                 HStack(spacing: 12) {
                     Button {
-                        if isPlaying { stopPlayback() }
-                        else { PreviewPlayer.shared.play(url); isPlaying = true }
+                        if isPlaying {
+                            stopPlayback()
+                        } else {
+                            PreviewPlayer.shared.play(url)
+                            isPlaying = true
+                        }
                     } label: {
                         Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 18, weight: .bold))
@@ -131,8 +147,12 @@ struct SwipeCard: View {
                     .buttonStyle(.plain)
 
                     if let wf = waveform {
-                        ScrollingWaveform(samples: wf, progress: player.progress, height: 26)
-                            .opacity(isPlaying ? 1 : 0.9)
+                        ScrollingWaveform(
+                            samples: wf,
+                            progress: player.progress,
+                            height: 26
+                        )
+                        .opacity(isPlaying ? 1 : 0.9)
                     } else {
                         RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.25))
                             .frame(height: 26)
@@ -165,17 +185,17 @@ struct SwipeCard: View {
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
 
-        // Load preview + waveform
+        // Load preview + waveform (silent if missing)
         .task(id: track.id ?? track.uri ?? track.name) { await resolvePreviewIfNeeded() }
 
-        // Ensure artist genres (lazy)
+        // Ensure artist genres (by ID)
         .task(id: primaryArtistID) {
             if let aid = primaryArtistID {
                 await api.ensureArtistGenres(for: [aid], auth: auth)
             }
         }
 
-        // ✅ Ensure popularity for this track (lazy)
+        // Ensure popularity for this track (lazy)
         .task(id: track.id) {
             if let id = track.id {
                 await api.ensureTrackPopularity(for: [id], auth: auth)
@@ -199,17 +219,6 @@ struct SwipeCard: View {
         return nil
     }
 
-    private var primaryArtistID: String? {
-        track.artists.first(where: { $0.id != nil })?.id
-    }
-
-    private var genreChips: [String]? {
-        guard let aid = primaryArtistID,
-              let genres = api.artistGenres[aid], !genres.isEmpty
-        else { return nil }
-        return Array(genres.prefix(2))
-    }
-
     private var shareURL: URL? {
         guard let s = track.spotifyURLString, let u = URL(string: s) else { return nil }
         return u
@@ -230,35 +239,45 @@ struct SwipeCard: View {
             offset = CGSize(width: dir == .right ? 800 : -800, height: 0)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            onSwipe(dir); offset = .zero
+            onSwipe(dir)
+            offset = .zero
         }
     }
 
     private func stopPlayback() {
-        if isPlaying { PreviewPlayer.shared.stop(); isPlaying = false }
+        if isPlaying {
+            PreviewPlayer.shared.stop()
+            isPlaying = false
+        }
     }
 
-    // --- Resolve Spotify/Deezer preview + waveform --------------------------
+    // --- Resolve Spotify/Deezer preview + waveform (no toast) ---------------
     private func resolvePreviewIfNeeded() async {
-        let key = track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
+        let key = previewKey
 
+        // 0) Spotify preview if present
         if let s = track.preview_url {
             previewURL = s
             Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: s) }
             return
         }
+
+        // 1) App-level cache (validate before use)
         if let cached = api.previewMap[key] {
-            previewURL = cached
-            Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: cached) }
-            return
+            if let ok = await DeezerPreviewService.shared.validatePreview(urlString: cached, trackKey: key, track: track) {
+                previewURL = ok
+                await MainActor.run { api.previewMap[key] = ok }
+                Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: ok) }
+                return
+            } else {
+                await MainActor.run { api.previewMap.removeValue(forKey: key) }
+            }
         }
 
         isResolvingPreview = true
-        defer {
-            isResolvingPreview = false
-            if previewURL == nil { ToastCenter.shared.show("No preview available") }
-        }
+        defer { isResolvingPreview = false }
 
+        // 2) Deezer resolve
         if let deezer = await DeezerPreviewService.shared.resolvePreview(for: track) {
             previewURL = deezer
             await MainActor.run { api.previewMap[key] = deezer }
@@ -276,7 +295,7 @@ private struct PopularityBar: View {
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3).fill(.white.opacity(0.15))
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(.white) // inherits tint
+                    .fill(.white)
                     .frame(width: max(0, min(1, value)) * w)
             }
         }

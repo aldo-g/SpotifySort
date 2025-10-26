@@ -1,7 +1,7 @@
 import Foundation
 
 /// Looks up 30s MP3 previews from Deezer for tracks where Spotify has no preview.
-/// Now validates cached URLs (HEAD) to avoid 403s from expired signed links.
+/// Validates cached URLs (HEAD) to avoid 403/404/hostname issues.
 final class DeezerPreviewService {
     static let shared = DeezerPreviewService()
 
@@ -9,7 +9,6 @@ final class DeezerPreviewService {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 8
         cfg.timeoutIntervalForResource = 8
-        // Present like Mobile Safari and hint we want audio
         cfg.httpAdditionalHeaders = [
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
             "Accept": "audio/mpeg, audio/*;q=0.9, */*;q=0.5",
@@ -25,50 +24,48 @@ final class DeezerPreviewService {
         (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String]) ?? [:]
     }()
 
-    /// Returns a preview URL string if found (and **validated**), else nil.
+    // MARK: - Public API
+
+    /// Resolve a preview URL (validated) or re-query if needed.
     func resolvePreview(for track: Track) async -> String? {
-        // Key by Spotify track id if available, else URI, else name+artist.
-        let key = track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
+        let key = makeKey(for: track)
 
-        // 0) Check in-memory cache first (but validate before trusting)
+        // In-memory
         if let cached = cache.object(forKey: key as NSString) as String?,
-           let validated = await validateOrRefresh(urlString: cached, key: key, track: track) {
-            return validated
+           let ok = await validateOrRefresh(urlString: cached, key: key, track: track) {
+            return ok
         }
 
-        // 1) Check persisted cache (validate before trusting)
+        // Persisted
         if let persistedURL = persisted[key],
-           let validated = await validateOrRefresh(urlString: persistedURL, key: key, track: track) {
-            cache.setObject(validated as NSString, forKey: key as NSString)
-            return validated
+           let ok = await validateOrRefresh(urlString: persistedURL, key: key, track: track) {
+            cache.setObject(ok as NSString, forKey: key as NSString)
+            return ok
         }
 
-        // 2) Fresh lookup path (ISRC best match, then artist+title)
+        // Fresh
         if let fresh = await freshLookup(for: track) {
             store(fresh, for: key)
             return fresh
         }
-
         return nil
+    }
+
+    /// Validate a (possibly stale) preview URL; refreshes if invalid.
+    func validatePreview(urlString: String, trackKey: String, track: Track) async -> String? {
+        await validateOrRefresh(urlString: urlString, key: trackKey, track: track)
     }
 
     // MARK: - Validation / Refresh
 
-    /// Validate a Deezer preview URL with HEAD; if invalid, try host variant & finally re-query API.
     private func validateOrRefresh(urlString: String, key: String, track: Track) async -> String? {
-        // First enforce HTTPS and try the exact URL
-        if let u = URL(string: forceHTTPS(urlString)) {
-            if await headOK(u) { return u.absoluteString }
-        }
+        // try exact URL
+        if let u = URL(string: forceHTTPS(urlString)), await headOK(u) { return u.absoluteString }
 
-        // Try host variant swap (cdnt-preview <-> cdns-preview)
-        if let alt = swappedHost(urlString) {
-            if await headOK(alt) {
-                return alt.absoluteString
-            }
-        }
+        // try host swap
+        if let alt = swappedHost(urlString), await headOK(alt) { return alt.absoluteString }
 
-        // If either failed (403/404), it’s likely expired — remove and re-lookup.
+        // re-lookup
         remove(key)
         if let fresh = await freshLookup(for: track) {
             store(fresh, for: key)
@@ -77,21 +74,15 @@ final class DeezerPreviewService {
         return nil
     }
 
-    /// HEAD request; returns true if 2xx
+    /// HEAD request; returns true if 2xx. Any network/DNS error => false.
     private func headOK(_ url: URL) async -> Bool {
         var req = URLRequest(url: url)
         req.httpMethod = "HEAD"
-        // Some Deezer edges prefer ranged requests even for HEAD
         req.setValue("bytes=0-", forHTTPHeaderField: "Range")
         do {
             let (_, resp) = try await session.data(for: req)
-            if let http = resp as? HTTPURLResponse {
-                // 200/206 are fine; 204 is unusual but accept 2xx broadly
-                return (200...299).contains(http.statusCode)
-            }
-        } catch {
-            // Network error, treat as not OK
-        }
+            if let http = resp as? HTTPURLResponse { return (200...299).contains(http.statusCode) }
+        } catch { /* DNS/timeouts => invalid */ }
         return false
     }
 
@@ -111,24 +102,7 @@ final class DeezerPreviewService {
         return nil
     }
 
-    // MARK: - Storage
-
-    private func store(_ url: String, for key: String) {
-        cache.setObject(url as NSString, forKey: key as NSString)
-        persisted[key] = url
-        UserDefaults.standard.set(persisted, forKey: defaultsKey)
-    }
-
-    private func remove(_ key: String) {
-        cache.removeObject(forKey: key as NSString)
-        persisted.removeValue(forKey: key)
-        UserDefaults.standard.set(persisted, forKey: defaultsKey)
-    }
-
-    // MARK: - Deezer API lookups
-
     private func lookupByISRC(_ isrc: String) async -> String? {
-        // Try the direct track endpoint first, then fallback to search.
         if let u = URL(string: "https://api.deezer.com/track/isrc:\(isrc)"),
            let url = await fetchPreview(from: u) { return url }
 
@@ -147,13 +121,7 @@ final class DeezerPreviewService {
         return await fetchPreview(from: u, expectsArray: true)
     }
 
-    private struct DeezerTrack: Decodable {
-        let preview: String?
-        let title: String?
-        let duration: Int?
-        let artist: DeezerArtist?
-    }
-    private struct DeezerArtist: Decodable { let name: String? }
+    private struct DeezerTrack: Decodable { let preview: String? }
     private struct SearchResp: Decodable { let data: [DeezerTrack] }
 
     private func fetchPreview(from url: URL, expectsArray: Bool = false) async -> String? {
@@ -166,24 +134,32 @@ final class DeezerPreviewService {
                 let t = try JSONDecoder().decode(DeezerTrack.self, from: data)
                 return t.preview
             }
-        } catch {
-            print("Deezer fetch error:", error)
-            return nil
-        }
+        } catch { return nil }
+    }
+
+    // MARK: - Storage
+
+    private func store(_ url: String, for key: String) {
+        cache.setObject(url as NSString, forKey: key as NSString)
+        persisted[key] = url
+        UserDefaults.standard.set(persisted, forKey: defaultsKey)
+    }
+
+    private func remove(_ key: String) {
+        cache.removeObject(forKey: key as NSString)
+        persisted.removeValue(forKey: key)
+        UserDefaults.standard.set(persisted, forKey: defaultsKey)
     }
 
     // MARK: - Helpers
 
     private func forceHTTPS(_ u: String) -> String {
-        if u.lowercased().hasPrefix("http://") {
-            return "https://" + u.dropFirst("http://".count)
-        }
+        if u.lowercased().hasPrefix("http://") { return "https://" + u.dropFirst("http://".count) }
         return u
     }
 
     private func swappedHost(_ urlString: String) -> URL? {
         guard var comps = URLComponents(string: urlString), let host = comps.host else { return nil }
-        // Common Deezer variants observed in the wild: cdnt-preview, cdns-preview, cdn-preview
         if host.contains("cdnt-preview.") {
             comps.host = host.replacingOccurrences(of: "cdnt-preview.", with: "cdns-preview.")
         } else if host.contains("cdns-preview.") {
@@ -197,9 +173,7 @@ final class DeezerPreviewService {
     private func normalizeTitle(_ s: String) -> String {
         var t = s.lowercased()
         let patterns = ["(feat.", "(with ", " - remaster", " - radio edit", " - single", " - explicit"]
-        for p in patterns {
-            if let r = t.range(of: p) { t = String(t[..<r.lowerBound]) }
-        }
+        for p in patterns { if let r = t.range(of: p) { t = String(t[..<r.lowerBound]) } }
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -208,5 +182,9 @@ final class DeezerPreviewService {
         if let r = a.range(of: "&") { a = String(a[..<r.lowerBound]) }
         if let r = a.range(of: ",") { a = String(a[..<r.lowerBound]) }
         return a.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func makeKey(for track: Track) -> String {
+        track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
     }
 }
