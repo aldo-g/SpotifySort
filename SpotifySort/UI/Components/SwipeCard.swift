@@ -103,6 +103,7 @@ struct SwipeCard: View {
                         Button {
                             if isPlaying { stopPlayback() }
                             else { PreviewPlayer.shared.play(url); isPlaying = true }
+                            print("[DEBUG][SwipeCard] Play/Pause tapped (isPlaying=\(isPlaying)) for \(track.name)")
                         } label: {
                             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                                 .font(.system(size: 16, weight: .bold))
@@ -133,19 +134,29 @@ struct SwipeCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(16)
         .background(
-                    CardPatternBackground(artURL: track.album.images?.first?.url, cornerRadius: 18)
-                        .overlay(BrickOverlay().blendMode(.overlay))
-                )
+            CardPatternBackground(artURL: track.album.images?.first?.url, cornerRadius: 18)
+                .overlay(BrickOverlay().blendMode(.overlay))
+        )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .frame(width: targetWidth, height: targetHeight)       // <- UNIFORM SIZE
         .rotation3DEffect(.degrees(dragTilt), axis: (x: 0, y: 1, z: 0))
         .shadow(color: .black.opacity(0.55), radius: dragLift, y: 6)
         .offset(x: offset.width, y: offset.height)
-        .gesture(
+        .contentShape(Rectangle())
+        .onTapGesture {
+            print("[DEBUG][SwipeCard] Card received TAP for \(track.name)")
+        }
+        .simultaneousGesture(
             DragGesture()
                 .updating($isDragging) { _, s, _ in s = true }
-                .onChanged { value in offset = value.translation }
+                .onChanged { value in
+                    if offset == .zero {
+                        print("[DEBUG][SwipeCard] Drag START (translation=\(value.translation.width.rounded()), \(value.translation.height.rounded())) for \(track.name)")
+                    }
+                    offset = value.translation
+                }
                 .onEnded { value in
+                    print("[DEBUG][SwipeCard] Drag END (x=\(Int(value.translation.width))) for \(track.name)")
                     if value.translation.width > 120 { animateSwipe(.right) }
                     else if value.translation.width < -120 { animateSwipe(.left) }
                     else { withAnimation(.spring) { offset = .zero } }
@@ -159,7 +170,10 @@ struct SwipeCard: View {
         .task(id: track.id) {
             if let id = track.id { await api.ensureTrackPopularity(for: [id], auth: auth) }
         }
-        .onDisappear { stopPlayback() }
+        .onDisappear {
+            print("[DEBUG][SwipeCard] Disappear for \(track.name) → stop playback & reset offset")
+            stopPlayback()
+        }
     }
 
     // MARK: - Helpers
@@ -173,6 +187,7 @@ struct SwipeCard: View {
 
     private func animateSwipe(_ dir: SwipeDirection) {
         stopPlayback()
+        print("[DEBUG][SwipeCard] Animate SWIPE \(dir == .right ? "RIGHT" : "LEFT") for \(track.name)")
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
             offset = CGSize(width: dir == .right ? 800 : -800, height: 0)
         }
@@ -220,7 +235,7 @@ struct SwipeCard: View {
     }
 }
 
-// MARK: - (rest of the helper views unchanged)
+// MARK: - (helper subviews unchanged)
 private struct InfoBlock: View {
     let track: Track
     let genreChips: [String]

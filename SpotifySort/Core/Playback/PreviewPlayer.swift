@@ -52,7 +52,7 @@ final class PreviewPlayer: ObservableObject {
 
                 // Decode + start engine on main actor
                 let file = try AVAudioFile(forReading: tmp)
-                try await MainActor.run { self.startEngine(with: file) }
+                await MainActor.run { self.startEngine(with: file) }
             } catch is CancellationError {
                 // Stopped before completion
             } catch {

@@ -14,6 +14,9 @@ struct SortView: View {
     @State private var isLoading = true
     @State private var showHistory = false
 
+    // Dropdown state (screen-owned)
+    @State private var isDropdownOpen = false
+
     @State private var duplicateIDs: Set<String> = []
     private let pageSize = 20
 
@@ -26,70 +29,99 @@ struct SortView: View {
     }
 
     var body: some View {
-        SelectrBackground {
-            VStack(spacing: 12) {
-                if isLoading {
-                    ProgressView().task { await loadAll() }
-                } else if topIndex >= deck.count {
-                    if nextCursor < orderedAll.count {
-                        ProgressView("Loading more…").task { try? await loadNextPage() }
-                    } else {
-                        VStack(spacing: 10) {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 40)).foregroundStyle(.white)
-                            Text("All done!").font(.title2).bold().foregroundStyle(.white)
-                        }
-                    }
-                } else {
-                    ZStack {
-                        ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
-                            if idx >= topIndex, let tr = item.track {
-                                SwipeCard(
-                                    track: tr,
-                                    addedAt: item.added_at,
-                                    addedBy: item.added_by?.id,
-                                    isDuplicate: isDuplicate(trackID: tr.id),
-                                    onSwipe: { dir in onSwipe(direction: dir, item: item) }
-                                )
-                                .padding(.horizontal, 16)
-                                .zIndex(item.id == deck[topIndex].id ? 1 : 0)
+        ZStack {
+            SelectrBackground {
+                VStack(spacing: 12) {
+                    if isLoading {
+                        ProgressView().task { await loadAll() }
+                    } else if topIndex >= deck.count {
+                        if nextCursor < orderedAll.count {
+                            ProgressView("Loading more…").task { try? await loadNextPage() }
+                        } else {
+                            VStack(spacing: 10) {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.system(size: 40)).foregroundStyle(.white)
+                                Text("All done!").font(.title2).bold().foregroundStyle(.white)
                             }
                         }
-                    }
-                    .frame(maxHeight: .infinity)
-                }
-            }
-            .padding(.top, 8)
-        }
-        .selectrToolbar()
-        .navigationBarBackButtonHidden(true)
-        .navigationTitle("")
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbarBackground(.clear, for: .navigationBar)
-        .tint(.white) // ensure toolbar buttons + menu visuals use white
-        .toolbar {
-            // Title dropdown styled as a glassy chip
-            ToolbarItem(placement: .principal) {
-                Menu {
-                    Button { router.selectLiked() } label: {
-                        Label("Liked Songs", systemImage: "")
-                    }
-                    ForEach(ownedPlaylists, id: \.id) { pl in
-                        Button { router.selectPlaylist(pl.id) } label: {
-                            Text(pl.name).lineLimit(1)
+                    } else {
+                        ZStack {
+                            ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
+                                if idx >= topIndex, let tr = item.track {
+                                    SwipeCard(
+                                        track: tr,
+                                        addedAt: item.added_at,
+                                        addedBy: item.added_by?.id,
+                                        isDuplicate: isDuplicate(trackID: tr.id),
+                                        onSwipe: { dir in onSwipe(direction: dir, item: item) }
+                                    )
+                                    .padding(.horizontal, 16)
+                                    .zIndex(item.id == deck[topIndex].id ? 1 : 0)
+                                }
+                            }
                         }
+                        .allowsHitTesting(!isDropdownOpen)
+                        .frame(maxHeight: .infinity)
                     }
-                } label: {
-                    ToolbarMenuChip(title: playlist.name)
                 }
+                .padding(.top, 8)
             }
-            // History button
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showHistory = true } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.white)
+        }
+        .navigationBarBackButtonHidden(true)
+        .tint(.white)
+
+        // Our custom top bar instead of toolbar principal
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ZStack {
+                // Centered dropdown
+                PlaylistSelector(
+                    title: playlist.name,
+                    playlists: ownedPlaylists,
+                    currentID: nil,
+                    includeLikedRow: true,
+                    onSelectLiked: { router.selectLiked() },
+                    onSelectPlaylist: { id in router.selectPlaylist(id) },
+                    isOpen: $isDropdownOpen
+                )
+
+                // Right-aligned history button
+                HStack {
+                    Spacer()
+                    Button { showHistory = true } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.white)
+                    }
+                    .accessibilityLabel("History")
                 }
-                .accessibilityLabel("History")
+                .padding(.horizontal, 16)
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(Color.clear)
+            .zIndex(2001)
+        }
+
+        // Render dropdown overlay at screen level
+        .overlayPreferenceValue(ChipBoundsKey.self) { anchor in
+            GeometryReader { proxy in
+                if isDropdownOpen, let a = anchor {
+                    let rect = proxy[a]
+                    let width = max(rect.width, 260)
+                    DropdownPanel(
+                        width: width,
+                        origin: CGPoint(x: rect.midX - width/2, y: rect.maxY + 8), // centered
+                        playlists: ownedPlaylists,
+                        currentID: playlist.id,
+                        includeLikedRow: true,
+                        onDismiss: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                                isDropdownOpen = false
+                            }
+                        },
+                        onSelectLiked: { router.selectLiked() },
+                        onSelectPlaylist: { id in router.selectPlaylist(id) }
+                    )
+                }
             }
         }
         .sheet(isPresented: $showHistory) { HistoryView() }
@@ -144,15 +176,12 @@ struct SortView: View {
     // MARK: Actions (auto-commit)
 
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
-        // record reviewed locally
         if let uri = item.track?.uri {
             ReviewStore.shared.addReviewed(uri, for: listKey)
         }
 
         if direction == .left, let tr = item.track, let uri = tr.uri {
-            Task {
-                await removeFromPlaylist(uri: uri, track: tr)
-            }
+            Task { await removeFromPlaylist(uri: uri, track: tr) }
         }
 
         topIndex += 1

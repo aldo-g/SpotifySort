@@ -13,6 +13,9 @@ struct SortLikedView: View {
     @State private var isLoading = true
     @State private var showHistory = false
 
+    // Dropdown state (screen-owned)
+    @State private var isDropdownOpen = false
+
     @State private var nextURL: String? = nil
     @State private var isFetching = false
     @State private var allDone = false
@@ -30,71 +33,103 @@ struct SortLikedView: View {
     }
 
     var body: some View {
-        SelectrBackground {
-            VStack(spacing: 12) {
-                if isLoading {
-                    ProgressView("Preparing deck…").task { await initialFastStart() }
-                } else if topIndex >= deck.count {
-                    if !allDone || nextCursor < orderedAll.count {
-                        ProgressView("Loading more…").task { await topUpIfNeeded(force: true) }
-                    } else {
-                        VStack(spacing: 10) {
-                            Image(systemName: "heart.slash.fill")
-                                .font(.system(size: 40)).foregroundStyle(.white)
-                            Text("All liked tracks reviewed")
-                                .font(.title3).bold().foregroundStyle(.white)
-                        }
-                    }
-                } else {
-                    ZStack {
-                        ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
-                            if idx >= topIndex, let tr = item.track {
-                                SwipeCard(
-                                    track: tr,
-                                    addedAt: item.added_at,
-                                    addedBy: item.added_by?.id,
-                                    isDuplicate: false,
-                                    onSwipe: { dir in onSwipe(direction: dir, item: item) }
-                                )
-                                .padding(.horizontal, 16)
-                                .zIndex(item.id == deck[topIndex].id ? 1 : 0)
+        ZStack { // root stack to host overlay
+            SelectrBackground {
+                VStack(spacing: 12) {
+                    if isLoading {
+                        ProgressView("Preparing deck…").task { await initialFastStart() }
+                    } else if topIndex >= deck.count {
+                        if !allDone || nextCursor < orderedAll.count {
+                            ProgressView("Loading more…").task { await topUpIfNeeded(force: true) }
+                        } else {
+                            VStack(spacing: 10) {
+                                Image(systemName: "heart.slash.fill")
+                                    .font(.system(size: 40)).foregroundStyle(.white)
+                                Text("All liked tracks reviewed")
+                                    .font(.title3).bold().foregroundStyle(.white)
                             }
                         }
-                    }
-                    .frame(maxHeight: .infinity)
-                }
-            }
-            .padding(.top, 8)
-        }
-        .selectrToolbar()
-        .navigationBarBackButtonHidden(true)
-        .navigationTitle("")
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbarBackground(.clear, for: .navigationBar)
-        .tint(.white) // make toolbar items white to match the theme
-        .toolbar {
-            // Title dropdown styled as a glassy chip
-            ToolbarItem(placement: .principal) {
-                Menu {
-                    Button { router.selectLiked() } label: {
-                        Label("Liked Songs", systemImage: "")
-                    }
-                    ForEach(ownedPlaylists, id: \.id) { pl in
-                        Button { router.selectPlaylist(pl.id) } label: {
-                            Text(pl.name).lineLimit(1)
+                    } else {
+                        ZStack {
+                            ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
+                                if idx >= topIndex, let tr = item.track {
+                                    SwipeCard(
+                                        track: tr,
+                                        addedAt: item.added_at,
+                                        addedBy: item.added_by?.id,
+                                        isDuplicate: false,
+                                        onSwipe: { dir in onSwipe(direction: dir, item: item) }
+                                    )
+                                    .padding(.horizontal, 16)
+                                    .zIndex(item.id == deck[topIndex].id ? 1 : 0)
+                                }
+                            }
                         }
+                        .allowsHitTesting(!isDropdownOpen) // block card while dropdown open
+                        .frame(maxHeight: .infinity)
                     }
-                } label: {
-                    ToolbarMenuChip(title: "Liked Songs")
                 }
+                .padding(.top, 8)
             }
-            // History button
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showHistory = true } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.white)
+        }
+        .navigationBarBackButtonHidden(true)
+        .navigationTitle("") // hide title completely
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar) // fully hide system title bar
+        .tint(.white)
+
+        // Our custom top bar (replaces toolbar principal to allow anchoring)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ZStack {
+                // Centered dropdown
+                PlaylistSelector(
+                    title: "Liked Songs",
+                    playlists: ownedPlaylists,
+                    currentID: nil,
+                    includeLikedRow: true,
+                    onSelectLiked: { router.selectLiked() },
+                    onSelectPlaylist: { id in router.selectPlaylist(id) },
+                    isOpen: $isDropdownOpen
+                )
+
+                // Right-aligned history button
+                HStack {
+                    Spacer()
+                    Button { showHistory = true } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.white)
+                    }
+                    .accessibilityLabel("History")
                 }
-                .accessibilityLabel("History")
+                .padding(.horizontal, 16)
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(Color.clear)
+            .zIndex(2001)
+        }
+
+        // Render the dropdown overlay at the SCREEN level
+        .overlayPreferenceValue(ChipBoundsKey.self) { anchor in
+            GeometryReader { proxy in
+                if isDropdownOpen, let a = anchor {
+                    let rect = proxy[a]
+                    let width = max(rect.width, 260)
+                    DropdownPanel(
+                        width: width,
+                        origin: CGPoint(x: rect.midX - width/2, y: rect.maxY + 8), // centered
+                        playlists: ownedPlaylists,
+                        currentID: nil,
+                        includeLikedRow: true,
+                        onDismiss: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                                isDropdownOpen = false
+                            }
+                        },
+                        onSelectLiked: { router.selectLiked() },
+                        onSelectPlaylist: { id in router.selectPlaylist(id) }
+                    )
+                }
             }
         }
         .sheet(isPresented: $showHistory) { HistoryView() }
@@ -177,7 +212,6 @@ struct SortLikedView: View {
     // MARK: Actions (auto-commit)
 
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
-        // mark reviewed immediately
         if let id = item.track?.id {
             ReviewStore.shared.addReviewed(id, for: listKey)
             reviewedSet.insert(id)
@@ -185,11 +219,8 @@ struct SortLikedView: View {
             ReviewStore.shared.addReviewed(uri, for: listKey)
         }
 
-        // auto-commit if swiped left
         if direction == .left, let tr = item.track, let id = tr.id {
-            Task {
-                await removeFromLiked(id: id, track: tr)
-            }
+            Task { await removeFromLiked(id: id, track: tr) }
         }
 
         topIndex += 1

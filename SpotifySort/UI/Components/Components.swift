@@ -1,6 +1,8 @@
 import SwiftUI
 
-// Existing component (unchanged)
+// ──────────────────────────────────────────────────────────────────────────────
+// Provider card (unchanged)
+// ──────────────────────────────────────────────────────────────────────────────
 struct ProviderCard: View {
     let title: String
     let subtitle: String
@@ -47,12 +49,19 @@ struct ProviderCard: View {
     }
 }
 
-// NEW: Glassy toolbar chip for Menu labels so it matches SwipeCard chrome.
-public struct ToolbarMenuChip: View {
-    public var title: String
-    public init(title: String) { self.title = title }
+// ──────────────────────────────────────────────────────────────────────────────
+// Chip
+// ──────────────────────────────────────────────────────────────────────────────
+struct ToolbarMenuChip: View {
+    var title: String
+    var isActive: Bool = false
 
-    public var body: some View {
+    init(title: String, isActive: Bool = false) {
+        self.title = title
+        self.isActive = isActive
+    }
+
+    var body: some View {
         HStack(spacing: 6) {
             Text(title)
                 .font(.headline.weight(.semibold))
@@ -64,9 +73,199 @@ public struct ToolbarMenuChip: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 12)
-        .background(.white.opacity(0.06), in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+        .background(
+            LinearGradient(
+                colors: isActive
+                    ? [.white.opacity(0.18), .white.opacity(0.08)]
+                    : [.white.opacity(0.06), .white.opacity(0.03)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ),
+            in: Capsule()
+        )
+        .overlay(Capsule().stroke(.white.opacity(isActive ? 0.35 : 0.15), lineWidth: 1))
         .overlay(BrickOverlay().blendMode(.overlay))
         .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+    }
+}
+
+// Preference key used to expose the chip’s rect up to the screen
+struct ChipBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Playlist Selector (toolbar chip only; screen renders the dropdown overlay)
+// ──────────────────────────────────────────────────────────────────────────────
+struct PlaylistSelector: View {
+    var title: String
+    var playlists: [Playlist]
+    var currentID: String?
+    var includeLikedRow: Bool = true
+    var onSelectLiked: () -> Void
+    var onSelectPlaylist: (String) -> Void
+
+    /// Externally controlled open/close state (screen owns overlay)
+    var isOpenExternal: Binding<Bool>? = nil
+
+    init(
+        title: String,
+        playlists: [Playlist],
+        currentID: String?,
+        includeLikedRow: Bool = true,
+        onSelectLiked: @escaping () -> Void,
+        onSelectPlaylist: @escaping (String) -> Void,
+        isOpen: Binding<Bool>? = nil
+    ) {
+        self.title = title
+        self.playlists = playlists
+        self.currentID = currentID
+        self.includeLikedRow = includeLikedRow
+        self.onSelectLiked = onSelectLiked
+        self.onSelectPlaylist = onSelectPlaylist
+        self.isOpenExternal = isOpen
+    }
+
+    var body: some View {
+        Button {
+            let new = !(isOpenExternal?.wrappedValue ?? false)
+            isOpenExternal?.wrappedValue = new
+            print("[DEBUG][Dropdown] Toggle → \(new ? "OPEN" : "CLOSED")")
+        } label: {
+            ToolbarMenuChip(title: title, isActive: isOpenExternal?.wrappedValue ?? false)
+        }
+        // Expose our bounds so the screen can anchor the panel under the chip.
+        .anchorPreference(key: ChipBoundsKey.self, value: .bounds) { $0 }
+        .accessibilityIdentifier("PlaylistSelectorChip")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Dropdown panel view (rendered by the screen, not by the toolbar).
+// ──────────────────────────────────────────────────────────────────────────────
+struct DropdownPanel: View {
+    var width: CGFloat
+    var origin: CGPoint
+    var playlists: [Playlist]
+    var currentID: String?
+    var includeLikedRow: Bool
+    var onDismiss: () -> Void
+    var onSelectLiked: () -> Void
+    var onSelectPlaylist: (String) -> Void
+
+    @State private var appear = false
+
+    var body: some View {
+        let baseIndex = includeLikedRow ? 1 : 0
+
+        ZStack(alignment: .topLeading) {
+            // Backdrop: captures taps and closes
+            Color.black.opacity(0.001)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    print("[DEBUG][Dropdown] Backdrop received tap")
+                    onDismiss()
+                }
+
+            // ROWS ONLY — no outer rounded rectangle "box"
+            VStack(spacing: 8) {
+                if includeLikedRow {
+                    AnimatedSelectorRow(
+                        title: "Liked Songs",
+                        isSelected: currentID == nil,
+                        index: 0,
+                        appear: appear,
+                        action: {
+                            print("[DEBUG][Dropdown] Row tapped → Liked Songs")
+                            onSelectLiked()
+                            onDismiss()
+                        }
+                    )
+                }
+
+                ForEach(Array(playlists.enumerated()), id: \.element.id) { (i, pl) in
+                    AnimatedSelectorRow(
+                        title: pl.name,
+                        isSelected: pl.id == currentID,
+                        index: i + baseIndex,
+                        appear: appear,
+                        action: {
+                            print("[DEBUG][Dropdown] Row tapped → Playlist id=\(pl.id)")
+                            onSelectPlaylist(pl.id)
+                            onDismiss()
+                        }
+                    )
+                }
+            }
+            .padding(12)
+            .frame(width: width)
+            .contentShape(Rectangle())
+            .offset(x: origin.x, y: origin.y)
+            .onAppear {
+                print("[DEBUG][Dropdown] Panel appeared @ (\(origin.x.rounded()), \(origin.y.rounded())) width=\(Int(width))")
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) { appear = true }
+            }
+        }
+        .zIndex(2000)
+        .allowsHitTesting(true)
+    }
+}
+
+private struct AnimatedSelectorRow: View {
+    var title: String
+    var isSelected: Bool
+    var index: Int
+    var appear: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            print("[DEBUG][Dropdown] Row button tap → \"\(title)\" (selected=\(isSelected))")
+            action()
+        }) {
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.92))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                // Deep gradient background with subtle blur
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: isSelected
+                                ? [Color.purple.opacity(0.55), Color.indigo.opacity(0.65)]
+                                : [Color.black.opacity(0.45), Color.black.opacity(0.25)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .background(.ultraThinMaterial)
+            )
+            .overlay(BrickOverlay().blendMode(.overlay).opacity(0.4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(isSelected ? 0.35 : 0.15), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
+            .shadow(color: .purple.opacity(isSelected ? 0.3 : 0.0), radius: 16, y: 0)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .opacity(appear ? 1 : 0)
+        .offset(y: appear ? 0 : -8)
+        .animation(
+            .spring(response: 0.4, dampingFraction: 0.95)
+                .delay(0.03 * Double(index)),
+            value: appear
+        )
+        .accessibilityIdentifier("DropdownRow_\(title)")
     }
 }
