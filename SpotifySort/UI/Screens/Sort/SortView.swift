@@ -23,6 +23,9 @@ struct SortView: View {
     private var listKey: String { "playlist:\(playlist.id)" }
     @State private var reviewedSet: Set<String> = []
 
+    // NEW: menu overlay
+    @State private var showMenu = false
+
     private var ownedPlaylists: [Playlist] {
         guard let me = api.user?.id else { return api.playlists }
         return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
@@ -126,6 +129,24 @@ struct SortView: View {
         }
         .sheet(isPresented: $showHistory) { HistoryView() }
         .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
+
+        // === NEW: hamburger + full overlay menu ===
+        .overlay(MenuIconOverlay(isOpen: $showMenu), alignment: .topLeading)
+        .overlay(
+            AppMenu(isOpen: $showMenu) { action in
+                switch action {
+                case .liked:
+                    router.selectLiked()
+                case .history:
+                    showHistory = true
+                case .settings, .about:
+                    break // hook up when you add routes
+                }
+            }
+            .environmentObject(auth),
+            alignment: .topLeading
+        )
+        // ==========================================
     }
 
     private func loadAll() async {
