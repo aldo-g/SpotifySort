@@ -229,43 +229,52 @@ private struct AnimatedSelectorRow: View {
             HStack(spacing: 10) {
                 Text(title)
                     .font(.callout.weight(isSelected ? .semibold : .regular))
-                    .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.92))
+                    .foregroundColor(.white)          // full white
                     .lineLimit(1)
                 Spacer()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
+
+            // -- BACKGROUNDS (behind the text) --
             .background(
-                // Deep gradient background with subtle blur
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: isSelected
-                                ? [Color.purple.opacity(0.55), Color.indigo.opacity(0.65)]
-                                : [Color.black.opacity(0.45), Color.black.opacity(0.25)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                ZStack {
+                    // blur material
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.ultraThinMaterial)
+
+                    // gradient tint (now under the text)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: isSelected
+                                    ? [Color.purple.opacity(0.55), Color.indigo.opacity(0.65)]
+                                    : [Color.black.opacity(0.50), Color.black.opacity(0.32)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .background(.ultraThinMaterial)
+
+                    // texture (still under text)
+                    BrickOverlay()
+                        .blendMode(.overlay)
+                        .opacity(0.35)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
             )
-            .overlay(BrickOverlay().blendMode(.overlay).opacity(0.4))
+
+            // -- ONLY THE STROKE OVER THE TOP --
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.white.opacity(isSelected ? 0.35 : 0.15), lineWidth: 1)
+                    .stroke(.white.opacity(isSelected ? 0.32 : 0.16), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
-            .shadow(color: .purple.opacity(isSelected ? 0.3 : 0.0), radius: 16, y: 0)
+            .shadow(color: .black.opacity(0.35), radius: 10, y: 5)
+            .compositingGroup() // ensure all layers clip/blend together cleanly
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .opacity(appear ? 1 : 0)
         .offset(y: appear ? 0 : -8)
-        .animation(
-            .spring(response: 0.4, dampingFraction: 0.95)
-                .delay(0.03 * Double(index)),
-            value: appear
-        )
+        .animation(.spring(response: 0.4, dampingFraction: 0.95).delay(0.03 * Double(index)), value: appear)
         .accessibilityIdentifier("DropdownRow_\(title)")
     }
 }
