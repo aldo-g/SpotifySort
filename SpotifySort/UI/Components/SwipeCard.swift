@@ -12,6 +12,9 @@ struct SwipeCard: View {
     // NEW: force a uniform size from parent
     var fixedSize: CGSize? = nil
 
+    // NEW: live-drag callback (x translation in points)
+    var onDragX: (CGFloat) -> Void = { _ in }
+
     @EnvironmentObject var api: SpotifyAPI
     @EnvironmentObject var auth: AuthManager
 
@@ -154,9 +157,13 @@ struct SwipeCard: View {
                         print("[DEBUG][SwipeCard] Drag START (translation=\(value.translation.width.rounded()), \(value.translation.height.rounded())) for \(track.name)")
                     }
                     offset = value.translation
+                    // NEW: live-drag emit
+                    onDragX(offset.width)
                 }
                 .onEnded { value in
                     print("[DEBUG][SwipeCard] Drag END (x=\(Int(value.translation.width))) for \(track.name)")
+                    // NEW: reset emit immediately
+                    onDragX(0)
                     if value.translation.width > 120 { animateSwipe(.right) }
                     else if value.translation.width < -120 { animateSwipe(.left) }
                     else { withAnimation(.spring) { offset = .zero } }
@@ -176,7 +183,7 @@ struct SwipeCard: View {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Helpers (unchanged)
 
     private var addedInfoLine: String? {
         let added = addedAt?.prefix(10) ?? ""
@@ -234,6 +241,8 @@ struct SwipeCard: View {
         }
     }
 }
+
+// … (helper subviews remain exactly as in your current file)
 
 // MARK: - (helper subviews unchanged)
 private struct InfoBlock: View {
