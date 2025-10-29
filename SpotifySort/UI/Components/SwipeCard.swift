@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum SwipeDirection { case left, right }
 
@@ -8,11 +9,7 @@ struct SwipeCard: View {
     let addedBy: String?
     let isDuplicate: Bool
     let onSwipe: (SwipeDirection) -> Void
-
-    // NEW: force a uniform size from parent
     var fixedSize: CGSize? = nil
-
-    // NEW: live-drag callback (x translation in points)
     var onDragX: (CGFloat) -> Void = { _ in }
 
     @EnvironmentObject var api: SpotifyAPI
@@ -47,40 +44,47 @@ struct SwipeCard: View {
 
     private var dragTilt: Double { Double(offset.width) / 22 }
     private var dragLift: CGFloat { 8 + min(18, abs(offset.width) / 12) }
-
     private let reservedPlayerHeight: CGFloat = 44
 
     var body: some View {
-        // Compute consistent size (either provided or a sensible default)
         let targetWidth = fixedSize?.width ?? (UIScreen.main.bounds.width * 0.88)
         let targetHeight = fixedSize?.height ?? 640
 
         VStack(spacing: 12) {
             // === ART ===
-            RemoteImage(url: track.album.images?.first?.url)
-                .frame(height: 260)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(.white.opacity(0.18), lineWidth: 1)
-                )
-                .overlay {
-                    if isResolvingPreview && previewURL == nil {
-                        ProgressView().padding(10)
-                            .background(.ultraThinMaterial, in: Circle())
+            ZStack(alignment: .bottomTrailing) {
+                RemoteImage(url: track.album.images?.first?.url)
+                    .frame(height: 260)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(.white.opacity(0.18), lineWidth: 1)
+                    )
+                    .overlay {
+                        if isResolvingPreview && previewURL == nil {
+                            ProgressView().padding(10)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
                     }
+
+                // === SHARE ICON (no container) ===
+                Button(action: shareTrack) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.6), radius: 3, y: 1) // keep visible on bright covers
+                        .padding(10) // position in from the corner
+                        .contentShape(Rectangle()) // generous hit target
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Share track")
+            }
 
             // === INFO ===
             BrickTile {
-                InfoBlock(
-                    track: track,
-                    genreChips: genreChips,
-                    addedInfoLine: addedInfoLine
-                )
+                InfoBlock(track: track, genreChips: genreChips, addedInfoLine: addedInfoLine)
             }
-            .frame(maxWidth: .infinity)
 
             // === POPULARITY ===
             if let pop = popularity {
@@ -94,7 +98,6 @@ struct SwipeCard: View {
                             .foregroundStyle(.white.opacity(0.7))
                     }
                 }
-                .frame(maxWidth: .infinity)
             }
 
             Spacer(minLength: 0)
@@ -106,7 +109,6 @@ struct SwipeCard: View {
                         Button {
                             if isPlaying { stopPlayback() }
                             else { PreviewPlayer.shared.play(url); isPlaying = true }
-                            print("[DEBUG][SwipeCard] Play/Pause tapped (isPlaying=\(isPlaying)) for \(track.name)")
                         } label: {
                             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                                 .font(.system(size: 16, weight: .bold))
@@ -141,28 +143,19 @@ struct SwipeCard: View {
                 .overlay(BrickOverlay().blendMode(.overlay))
         )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .frame(width: targetWidth, height: targetHeight)       // <- UNIFORM SIZE
+        .frame(width: targetWidth, height: targetHeight)
         .rotation3DEffect(.degrees(dragTilt), axis: (x: 0, y: 1, z: 0))
         .shadow(color: .black.opacity(0.55), radius: dragLift, y: 6)
         .offset(x: offset.width, y: offset.height)
         .contentShape(Rectangle())
-        .onTapGesture {
-            print("[DEBUG][SwipeCard] Card received TAP for \(track.name)")
-        }
         .simultaneousGesture(
             DragGesture()
                 .updating($isDragging) { _, s, _ in s = true }
                 .onChanged { value in
-                    if offset == .zero {
-                        print("[DEBUG][SwipeCard] Drag START (translation=\(value.translation.width.rounded()), \(value.translation.height.rounded())) for \(track.name)")
-                    }
                     offset = value.translation
-                    // NEW: live-drag emit
                     onDragX(offset.width)
                 }
                 .onEnded { value in
-                    print("[DEBUG][SwipeCard] Drag END (x=\(Int(value.translation.width))) for \(track.name)")
-                    // NEW: reset emit immediately
                     onDragX(0)
                     if value.translation.width > 120 { animateSwipe(.right) }
                     else if value.translation.width < -120 { animateSwipe(.left) }
@@ -177,14 +170,28 @@ struct SwipeCard: View {
         .task(id: track.id) {
             if let id = track.id { await api.ensureTrackPopularity(for: [id], auth: auth) }
         }
-        .onDisappear {
-            print("[DEBUG][SwipeCard] Disappear for \(track.name) → stop playback & reset offset")
-            stopPlayback()
+        .onDisappear { stopPlayback() }
+    }
+
+    // MARK: - Share action
+    private func shareTrack() {
+        // Prefer an Open Spotify URL if we have the ID, else fall back to text.
+        if let id = track.id, let url = URL(string: "https://open.spotify.com/track/\(id)") {
+            presentShare(items: [url])
+        } else {
+            presentShare(items: [track.name])
         }
     }
 
-    // MARK: - Helpers (unchanged)
+    private func presentShare(items: [Any]) {
+        let av = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let root = scene.keyWindow?.rootViewController {
+            root.present(av, animated: true)
+        }
+    }
 
+    // MARK: - Helpers
     private var addedInfoLine: String? {
         let added = addedAt?.prefix(10) ?? ""
         if let by = addedBy, !by.isEmpty { return "Added by \(by)\(added.isEmpty ? "" : " • \(added)")" }
@@ -194,7 +201,6 @@ struct SwipeCard: View {
 
     private func animateSwipe(_ dir: SwipeDirection) {
         stopPlayback()
-        print("[DEBUG][SwipeCard] Animate SWIPE \(dir == .right ? "RIGHT" : "LEFT") for \(track.name)")
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
             offset = CGSize(width: dir == .right ? 800 : -800, height: 0)
         }
@@ -241,8 +247,6 @@ struct SwipeCard: View {
         }
     }
 }
-
-// … (helper subviews remain exactly as in your current file)
 
 // MARK: - (helper subviews unchanged)
 private struct InfoBlock: View {
