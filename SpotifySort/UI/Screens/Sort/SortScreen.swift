@@ -1,9 +1,5 @@
 import SwiftUI
 
-// Unified sort screen that handles both Liked Songs and a specific Playlist.
-// Add thin shims:
-//   struct SortLikedView: View { var body: some View { SortScreen(mode: .liked) } }
-//   struct SortView: View { let playlist: Playlist; var body: some View { SortScreen(mode: .playlist(playlist)) } }
 enum SortMode { case liked, playlist(Playlist) }
 
 struct SortScreen: View {
@@ -20,8 +16,6 @@ struct SortScreen: View {
     @State private var topIndex: Int = 0
     @State private var isLoading = true
     @State private var showHistory = false
-
-    // Dropdown state (screen-owned)
     @State private var isDropdownOpen = false
 
     // Global menu overlay
@@ -40,7 +34,7 @@ struct SortScreen: View {
     @State private var reviewedSet: Set<String> = []
     @State private var duplicateIDs: Set<String> = []
 
-    // NEW: live drag x from the foremost card (for edge glows)
+    // Edge glow
     @State private var dragX: CGFloat = 0
 
     private var listKey: String {
@@ -69,7 +63,6 @@ struct SortScreen: View {
 
     var body: some View {
         ZStack {
-            // Background + content
             SelectrBackground {
                 VStack(spacing: 12) {
                     if isLoading {
@@ -82,7 +75,9 @@ struct SortScreen: View {
                             completionView
                         }
                     } else {
+                        // NUDGE: lift the card stack slightly
                         deckStack
+                            .padding(.top, -50)
                             .allowsHitTesting(!isDropdownOpen)
                             .frame(maxHeight: .infinity)
                     }
@@ -90,7 +85,6 @@ struct SortScreen: View {
                 .padding(.top, 8)
             }
 
-            // NEW: edge decision glows (green on left when dragging left; red on right when dragging right)
             EdgeGlows(intensityLeft: leftIntensity, intensityRight: rightIntensity)
                 .allowsHitTesting(false)
         }
@@ -100,7 +94,7 @@ struct SortScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .tint(.white)
 
-        // Custom top bar with centered selector + history on right
+        // === TOP BAR ===
         .safeAreaInset(edge: .top, spacing: 0) {
             ZStack {
                 // Centered dropdown chip
@@ -114,12 +108,18 @@ struct SortScreen: View {
                     isOpen: $isDropdownOpen
                 )
 
-                // Right-aligned history button
+                // Left menu & right history — glass buttons re-styled to blend with chip
                 HStack {
+                    GlassIconButton(system: "line.3.horizontal") {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                            showMenu.toggle()
+                        }
+                    }
+
                     Spacer()
-                    Button { showHistory = true } label: {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .foregroundStyle(.white)
+
+                    GlassIconButton(system: "clock.arrow.circlepath") {
+                        showHistory = true
                     }
                     .accessibilityLabel("History")
                 }
@@ -131,7 +131,7 @@ struct SortScreen: View {
             .zIndex(2001)
         }
 
-        // Render dropdown overlay anchored to the chip
+        // Dropdown overlay
         .overlayPreferenceValue(ChipBoundsKey.self) { anchor in
             GeometryReader { proxy in
                 if isDropdownOpen, let a = anchor {
@@ -139,7 +139,7 @@ struct SortScreen: View {
                     let width = max(rect.width, 260)
                     DropdownPanel(
                         width: width,
-                        origin: CGPoint(x: rect.midX - width/2, y: rect.maxY + 8), // centered under chip
+                        origin: CGPoint(x: rect.midX - width/2, y: rect.maxY + 8),
                         playlists: ownedPlaylists,
                         currentID: currentPlaylistID,
                         includeLikedRow: true,
@@ -155,38 +155,27 @@ struct SortScreen: View {
             }
         }
         .sheet(isPresented: $showHistory) { HistoryView() }
-        .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
 
-        // Hamburger + full overlay menu
-        .overlay(MenuIconOverlay(isOpen: $showMenu), alignment: .topLeading)
+        // Full-screen menu sheet
         .overlay(
             AppMenu(isOpen: $showMenu) { action in
                 switch action {
-                case .liked:
-                    router.selectLiked()
-                case .history:
-                    showHistory = true
-                case .settings, .about:
-                    break // hook up when you add routes
+                case .liked: router.selectLiked()
+                case .history: showHistory = true
+                case .settings, .about: break
                 }
             }
             .environmentObject(auth),
             alignment: .topLeading
         )
+        .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
     }
 
-    // MARK: - Computed intensities for glows (0...1), scaled to your 120pt swipe threshold
-    private var leftIntensity: CGFloat {
-        let v = max(0, min(1, (-dragX) / 120))
-        return v
-    }
-    private var rightIntensity: CGFloat {
-        let v = max(0, min(1, (dragX) / 120))
-        return v
-    }
+    // MARK: Glow intensity
+    private var leftIntensity: CGFloat { max(0, min(1, (-dragX) / 120)) }
+    private var rightIntensity: CGFloat { max(0, min(1, (dragX) / 120)) }
 
-    // MARK: - Subviews
-
+    // MARK: Deck
     private var deckStack: some View {
         ZStack {
             ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
@@ -198,7 +187,6 @@ struct SortScreen: View {
                         addedBy: item.added_by?.id,
                         isDuplicate: isDuplicate(trackID: tr.id),
                         onSwipe: { dir in onSwipe(direction: dir, item: item) },
-                        // Only the foremost card reports live drag for glows
                         onDragX: isTop ? { dragX = $0 } : { _ in }
                     )
                     .padding(.horizontal, 16)
@@ -208,6 +196,7 @@ struct SortScreen: View {
         }
     }
 
+    // MARK: Completion
     private var completionView: some View {
         Group {
             switch mode {
@@ -222,15 +211,13 @@ struct SortScreen: View {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 40)).foregroundStyle(.white)
-                    Text("All done!")
-                        .font(.title2).bold().foregroundStyle(.white)
+                    Text("All done!").font(.title2).bold().foregroundStyle(.white)
                 }
             }
         }
     }
 
     // MARK: - Loading / Paging
-
     private func initialLoad() async {
         if api.user == nil { try? await api.loadMe(auth: auth) }
         if api.playlists.isEmpty { try? await api.loadPlaylists(auth: auth) }
@@ -239,7 +226,6 @@ struct SortScreen: View {
 
         switch mode {
         case .liked:
-            // warm-start + first page for smoother start
             while orderedAll.count < warmStartTarget, !allDone {
                 await fetchNextPageAndMergeLiked()
             }
@@ -275,7 +261,6 @@ struct SortScreen: View {
         }
     }
 
-    // Liked: background prefetch
     private func backgroundFetchRemainingLiked() async {
         while !allDone {
             await fetchNextPageAndMergeLiked()
@@ -327,7 +312,6 @@ struct SortScreen: View {
     }
 
     // MARK: - Dedupe / Ranking
-
     private func recomputeDuplicates() {
         var counts: [String: Int] = [:]
         for it in orderedAll {
@@ -354,9 +338,7 @@ struct SortScreen: View {
     }
 
     // MARK: - Actions (auto-commit)
-
     private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
-        // Reset glow immediately so it doesn't linger during the exit animation
         dragX = 0
 
         switch mode {
@@ -431,41 +413,87 @@ private func fnv1a64(_ s: String) -> UInt64 {
     return hash
 }
 
-// Convenience
-private extension SortMode {
-    var isLiked: Bool { if case .liked = self { return true } else { return false } }
+// === UPDATED: glass icon button to blend with chip/tiles ===
+private struct GlassIconButton: View {
+    let system: String
+    let action: () -> Void
+    private let size: CGFloat = 34
+    private let radius: CGFloat = 10
+
+    var body: some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        }) {
+            ZStack {
+                // Base glass + gentle darkening (so icons stay vivid)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(Color.black.opacity(0.30)) // was 0.38 — a bit softer
+                            .blendMode(.multiply)
+                    )
+                    // Subtle top highlight (matches chip)
+                    .overlay(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.08), .clear],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    )
+                    // Brick texture inside the glass for cohesion
+                    .overlay(
+                        BrickOverlay(opacity: 0.12)
+                            .blendMode(.overlay)
+                            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    )
+                    // Edge strokes (same language as chip)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .stroke(.white.opacity(0.06), lineWidth: 1)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .inset(by: 0.5)
+                            .stroke(.black.opacity(0.22), lineWidth: 0.5)
+                    )
+                    .shadow(color: .black.opacity(0.16), radius: 3, y: 1)
+
+                Image(systemName: system)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white) // stays vivid
+            }
+            .frame(width: size, height: size)
+        }
+        .buttonStyle(.plain)
+    }
 }
 
-// MARK: - Edge glow view
+// MARK: - Edge glow (unchanged)
 private struct EdgeGlows: View {
-    var intensityLeft: CGFloat   // 0...1
-    var intensityRight: CGFloat  // 0...1
+    var intensityLeft: CGFloat
+    var intensityRight: CGFloat
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // LEFT (green → transparent)
                 LinearGradient(
-                    colors: [
-                        Color.red.opacity(0.55 * intensityLeft),
-                        Color.red.opacity(0.28 * intensityLeft),
-                        .clear
-                    ],
+                    colors: [Color.red.opacity(0.55 * intensityLeft),
+                             Color.red.opacity(0.28 * intensityLeft),
+                             .clear],
                     startPoint: .leading, endPoint: .trailing
                 )
-                .frame(width: geo.size.width * 0.42) // under half width feels subtle
+                .frame(width: geo.size.width * 0.42)
                 .blur(radius: 22)
                 .blendMode(.screen)
                 .ignoresSafeArea()
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // RIGHT (red → transparent)
                 LinearGradient(
-                    colors: [
-                        Color.green.opacity(0.55 * intensityRight),
-                        Color.green.opacity(0.28 * intensityRight),
-                        .clear
-                    ],
+                    colors: [Color.green.opacity(0.55 * intensityRight),
+                             Color.green.opacity(0.28 * intensityRight),
+                             .clear],
                     startPoint: .trailing, endPoint: .leading
                 )
                 .frame(width: geo.size.width * 0.42)
@@ -476,4 +504,8 @@ private struct EdgeGlows: View {
             }
         }
     }
+}
+
+private extension SortMode {
+    var isLiked: Bool { if case .liked = self { return true } else { return false } }
 }

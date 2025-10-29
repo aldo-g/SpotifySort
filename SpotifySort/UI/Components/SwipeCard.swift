@@ -73,9 +73,9 @@ struct SwipeCard: View {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.6), radius: 3, y: 1) // keep visible on bright covers
-                        .padding(10) // position in from the corner
-                        .contentShape(Rectangle()) // generous hit target
+                        .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
+                        .padding(10)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Share track")
@@ -175,7 +175,6 @@ struct SwipeCard: View {
 
     // MARK: - Share action
     private func shareTrack() {
-        // Prefer an Open Spotify URL if we have the ID, else fall back to text.
         if let id = track.id, let url = URL(string: "https://open.spotify.com/track/\(id)") {
             presentShare(items: [url])
         } else {
@@ -248,7 +247,7 @@ struct SwipeCard: View {
     }
 }
 
-// MARK: - (helper subviews unchanged)
+// MARK: - (helper subviews)
 private struct InfoBlock: View {
     let track: Track
     let genreChips: [String]
@@ -329,46 +328,18 @@ private struct Pill: View {
     }
 }
 
-private struct CardChromeBW: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(Color.black)
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.18), lineWidth: 1))
-            .shadow(color: .black.opacity(0.6), radius: 12, y: 6)
-    }
-}
-
+/// Simple left→right fill bar used for popularity.
 private struct PopularityBar: View {
-    let value: Double
+    let value: Double   // 0...1
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3).fill(.white.opacity(0.15))
-                RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: max(0, min(1, value)) * w)
+                RoundedRectangle(cornerRadius: 3).fill(.white)
+                    .frame(width: max(0, min(1, value)) * w)
             }
-        }.frame(height: 6)
-    }
-}
-
-private struct BrickSeparator: View {
-    var height: CGFloat = 8
-    var body: some View {
-        Rectangle()
-            .fill(.clear)
-            .frame(height: height)
-            .overlay(
-                GeometryReader { geo in
-                    let w = geo.size.width, brick = 28.0, gap = 10.0
-                    HStack(spacing: gap) {
-                        ForEach(0..<Int(ceil(w / (brick + gap))), id: \.self) { _ in
-                            Rectangle().fill(.white.opacity(0.22)).frame(width: brick, height: 1)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .offset(y: (height - 1) / 2)
-                }
-            )
-            .accessibilityHidden(true)
+        }
+        .frame(height: 6)
     }
 }

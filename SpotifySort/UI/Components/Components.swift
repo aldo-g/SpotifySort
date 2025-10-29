@@ -62,29 +62,52 @@ struct ToolbarMenuChip: View {
     }
 
     var body: some View {
+        let height: CGFloat = 34
+        let radius: CGFloat = 10
+
         HStack(spacing: 6) {
             Text(title)
                 .font(.headline.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundColor(.white)     // vivid white
                 .lineLimit(1)
+
             Image(systemName: "chevron.down")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundColor(.white)     // vivid white
         }
-        .padding(.vertical, 6)
         .padding(.horizontal, 12)
+        .frame(height: height)
+        // --- everything that darkens the chip goes BEHIND the content ---
         .background(
-            LinearGradient(
-                colors: isActive
-                    ? [.white.opacity(0.18), .white.opacity(0.08)]
-                    : [.white.opacity(0.06), .white.opacity(0.03)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            ),
-            in: Capsule()
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(.ultraThinMaterial)
+                // darken the glass (this is still *background*, not overlay)
+                .overlay(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(Color.black.opacity(0.38))
+                        .blendMode(.multiply)
+                )
+                // subtle top highlight (also in background)
+                .overlay(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.06), .clear],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                )
         )
-        .overlay(Capsule().stroke(.white.opacity(isActive ? 0.35 : 0.15), lineWidth: 1))
-        .overlay(BrickOverlay().blendMode(.overlay))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+        // edges only on top—won't dim the text
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(.white.opacity(isActive ? 0.10 : 0.06), lineWidth: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .inset(by: 0.5)
+                .stroke(.black.opacity(0.25), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
+        .accessibilityIdentifier("PlaylistSelectorChip")
     }
 }
 

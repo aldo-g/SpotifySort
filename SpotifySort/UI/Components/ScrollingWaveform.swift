@@ -1,13 +1,10 @@
 import SwiftUI
 
 /// Renders a precomputed waveform (0...1) and fills it left→right using playback progress.
-/// If `preRollPhase` is provided (0...1), shows a sweep cursor moving RIGHT→LEFT
-/// to indicate imminent autoplay. When playback starts, pass nil.
 struct ScrollingWaveform: View {
-    let samples: [Float]     // fixed per track
-    let progress: Double     // 0...1 from PreviewPlayer.shared.progress
+    let samples: [Float]
+    let progress: Double
     var height: CGFloat = 26
-    var preRollPhase: Double? = nil   // 0...1; nil = no pre-roll indicator
 
     var body: some View {
         GeometryReader { geo in
@@ -43,18 +40,6 @@ struct ScrollingWaveform: View {
                             with: .color(.white)
                         )
                     }
-                }
-
-                // Pre-roll sweep cursor (RIGHT → LEFT over 1s)
-                if let p = preRollPhase {
-                    let clamped = min(max(p, 0), 1)
-                    let x = (1.0 - clamped) * geo.size.width
-                    Rectangle()
-                        .fill(.white.opacity(0.9))
-                        .frame(width: max(2, capW * 0.4))
-                        .offset(x: x - geo.size.width/2)
-                        .shadow(radius: 3, y: 1)
-                        .accessibilityHidden(true)
                 }
             }
         }
