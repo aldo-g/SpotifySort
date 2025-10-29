@@ -3,6 +3,84 @@ import UIKit
 
 enum SwipeDirection { case left, right }
 
+// MARK: - Custom Shape with Bottom Notch
+struct RoundedRectangleWithNotch: Shape {
+    var cornerRadius: CGFloat
+    var notchRadius: CGFloat
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        
+        let notchCenterX = rect.midX
+        let notchBottomY = rect.maxY
+        
+        // Start from top-left, after corner radius
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
+        
+        // Top-left corner
+        path.addArc(
+            center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(180),
+            endAngle: .degrees(270),
+            clockwise: false
+        )
+        
+        // Top edge
+        path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
+        
+        // Top-right corner
+        path.addArc(
+            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(270),
+            endAngle: .degrees(0),
+            clockwise: false
+        )
+        
+        // Right edge
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
+        
+        // Bottom-right corner
+        path.addArc(
+            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(0),
+            endAngle: .degrees(90),
+            clockwise: false
+        )
+        
+        // Bottom edge to notch (right side)
+        path.addLine(to: CGPoint(x: notchCenterX + notchRadius, y: rect.maxY))
+        
+        // Semicircular notch (going inward)
+        path.addArc(
+            center: CGPoint(x: notchCenterX, y: notchBottomY),
+            radius: notchRadius,
+            startAngle: .degrees(0),
+            endAngle: .degrees(180),
+            clockwise: true  // clockwise = inward cut
+        )
+        
+        // Bottom edge from notch (left side)
+        path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
+        
+        // Bottom-left corner
+        path.addArc(
+            center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(90),
+            endAngle: .degrees(180),
+            clockwise: false
+        )
+        
+        // Close path
+        path.closeSubpath()
+        
+        return path
+    }
+}
+
 struct SwipeCard: View {
     let track: Track
     let addedAt: String?
@@ -45,7 +123,9 @@ struct SwipeCard: View {
     private var dragTilt: Double { Double(offset.width) / 22 }
     private var dragLift: CGFloat { 8 + min(18, abs(offset.width) / 12) }
     private let reservedPlayerHeight: CGFloat = 44
-    private let cornerRadius: CGFloat = 18
+    
+    // Notch styling
+    private let cardCornerRadius: CGFloat = 18
     private let notchRadius: CGFloat = 26
 
     var body: some View {
@@ -137,28 +217,25 @@ struct SwipeCard: View {
             }
             .frame(height: reservedPlayerHeight)
             .padding(.vertical, 6)
+            .padding(.bottom, 6) // Slight adjustment for notch
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(16)
         .background(
-            NotchedCardShape(cornerRadius: cornerRadius, notchRadius: notchRadius)
-                .fill(Color.clear)  // Invisible fill for the shape
-                .background(
-                    CardPatternBackground(artURL: track.album.images?.first?.url, cornerRadius: cornerRadius)
-                        .overlay(BrickOverlay().blendMode(.overlay))
-                )
-                .clipShape(NotchedCardShape(cornerRadius: cornerRadius, notchRadius: notchRadius))
+            CardPatternBackground(artURL: track.album.images?.first?.url, cornerRadius: cardCornerRadius)
+                .overlay(BrickOverlay().blendMode(.overlay))
+                .clipShape(RoundedRectangleWithNotch(cornerRadius: cardCornerRadius, notchRadius: notchRadius))
         )
-        .clipShape(NotchedCardShape(cornerRadius: cornerRadius, notchRadius: notchRadius))
+        .clipShape(RoundedRectangleWithNotch(cornerRadius: cardCornerRadius, notchRadius: notchRadius))
         .overlay(
-            NotchedCardShape(cornerRadius: cornerRadius, notchRadius: notchRadius)
+            RoundedRectangleWithNotch(cornerRadius: cardCornerRadius, notchRadius: notchRadius)
                 .stroke(.white.opacity(0.18), lineWidth: 1)
         )
         .frame(width: targetWidth, height: targetHeight)
         .rotation3DEffect(.degrees(dragTilt), axis: (x: 0, y: 1, z: 0))
         .shadow(color: .black.opacity(0.55), radius: dragLift, y: 6)
         .offset(x: offset.width, y: offset.height)
-        .contentShape(NotchedCardShape(cornerRadius: cornerRadius, notchRadius: notchRadius))
+        .contentShape(Rectangle())
         .simultaneousGesture(
             DragGesture()
                 .updating($isDragging) { _, s, _ in s = true }
@@ -352,75 +429,5 @@ private struct PopularityBar: View {
             }
         }
         .frame(height: 6)
-    }
-}
-
-/// Custom shape with rounded corners and a semicircular notch at the bottom center
-private struct NotchedCardShape: Shape {
-    var cornerRadius: CGFloat = 18
-    var notchRadius: CGFloat = 20
-    
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        
-        let notchCenter = CGPoint(x: rect.midX, y: rect.maxY)
-        
-        // Start from top-left, just after the corner
-        path.move(to: CGPoint(x: rect.minX + cornerRadius, y: rect.minY))
-        
-        // Top edge to top-right corner
-        path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
-        path.addArc(
-            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(-90),
-            endAngle: .degrees(0),
-            clockwise: false
-        )
-        
-        // Right edge to bottom-right corner
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
-        path.addArc(
-            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(0),
-            endAngle: .degrees(90),
-            clockwise: false
-        )
-        
-        // Bottom edge to notch (right side)
-        path.addLine(to: CGPoint(x: notchCenter.x + notchRadius, y: rect.maxY))
-        
-        // Semicircular notch (going inward/upward)
-        path.addArc(
-            center: notchCenter,
-            radius: notchRadius,
-            startAngle: .degrees(0),
-            endAngle: .degrees(180),
-            clockwise: true  // clockwise creates the inward notch
-        )
-        
-        // Continue bottom edge to bottom-left corner
-        path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
-        path.addArc(
-            center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(90),
-            endAngle: .degrees(180),
-            clockwise: false
-        )
-        
-        // Left edge back to top-left corner
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
-        path.addArc(
-            center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(180),
-            endAngle: .degrees(270),
-            clockwise: false
-        )
-        
-        path.closeSubpath()
-        return path
     }
 }
