@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// ViewModel for managing deck state and orchestrating sorting operations.
 /// Coordinates between UI and services, handles all business logic.
@@ -12,6 +13,11 @@ final class DeckViewModel: ObservableObject {
     @Published var isLoading = true
     @Published var duplicateIDs: Set<String> = []
     @Published var dragX: CGFloat = 0
+    @Published private(set) var hasMore: Bool = false
+    
+    // Edge glow intensities via SwipeDynamics
+    @Published var leftIntensity: CGFloat = 0
+    @Published var rightIntensity: CGFloat = 0
     
     // MARK: - Dependencies
     
@@ -33,18 +39,7 @@ final class DeckViewModel: ObservableObject {
     private let likedPageSize = 20
     private let playlistPageSize = 20
     
-    // Cached value updated during load/paging
-    @Published private(set) var hasMore: Bool = false
-    
     // MARK: - Computed Properties
-    
-    var leftIntensity: CGFloat {
-        max(0, min(1, (-dragX) / 120))
-    }
-    
-    var rightIntensity: CGFloat {
-        max(0, min(1, dragX / 120))
-    }
     
     var isComplete: Bool {
         !isLoading && topIndex >= deck.count && !hasMore
@@ -112,7 +107,10 @@ final class DeckViewModel: ObservableObject {
     
     /// Handle swipe action
     func swipe(direction: SwipeDirection, item: PlaylistTrack) async {
+        // reset drag + glows
         dragX = 0
+        leftIntensity = 0
+        rightIntensity = 0
         
         // Mark as reviewed
         if let id = item.track?.id {
@@ -139,7 +137,7 @@ final class DeckViewModel: ObservableObject {
         
         // Advance to next card
         topIndex += 1
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.impactMedium()
         
         // Top up if needed
         await topUpIfNeeded()
@@ -151,9 +149,14 @@ final class DeckViewModel: ObservableObject {
         return duplicateIDs.contains(id)
     }
     
-    /// Update drag offset (for edge glow)
+    /// Update drag offset and edge glow intensities
     func updateDragX(_ value: CGFloat) {
         dragX = value
+        let (l, r) = SwipeDynamics.edgeIntensities(forDragX: value)
+        if leftIntensity != l || rightIntensity != r {
+            leftIntensity = l
+            rightIntensity = r
+        }
     }
     
     // MARK: - Private - Liked Songs
@@ -173,13 +176,10 @@ final class DeckViewModel: ObservableObject {
             deck = result.tracks
             nextCursor = result.newCursor
             
-            // Continue fetching in background
-            Task.detached { [weak self] in
+            // Continue fetching in background (now owned by the service)
+            service.prefetchRemainingInBackground(reviewedIDs: reviewedSet) { [weak self] in
                 guard let self else { return }
-                if let service = await self.likedService {
-                    await service.backgroundFetchRemaining(reviewedIDs: await self.reviewedSet)
-                }
-                await self.topUpIfNeeded()
+                Task { await self.topUpIfNeeded() }
             }
         } catch {
             print("Liked songs load error:", error)
@@ -216,10 +216,10 @@ final class DeckViewModel: ObservableObject {
         let result: Bool
         switch mode {
         case .liked:
-            guard let service = likedService else { result = false; return }
+            guard let service = likedService else { result = false; hasMore = false; return }
             result = await service.hasMore(cursor: nextCursor)
         case .playlist:
-            guard let service = playlistService else { result = false; return }
+            guard let service = playlistService else { result = false; hasMore = false; return }
             result = await service.hasMore(cursor: nextCursor)
         }
         hasMore = result
@@ -305,9 +305,7 @@ final class DeckViewModel: ObservableObject {
     // MARK: - Helpers
     
     private var modePlaylistName: String? {
-        if case .playlist(let pl) = mode {
-            return pl.name
-        }
+        if case .playlist(let pl) = mode { return pl.name }
         return nil
     }
 }

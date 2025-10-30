@@ -40,9 +40,8 @@ struct SwipeCard: View {
     var fixedSize: CGSize? = nil
     var onDragX: (CGFloat) -> Void = { _ in }
 
-    @EnvironmentObject var api: SpotifyAPI
-    @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var previews: PreviewResolver   // preview service
+    // Unified environment (api/auth/previews inside)
+    @EnvironmentObject var env: AppEnvironment
 
     @State private var offset: CGSize = .zero
     @GestureState private var isDragging = false
@@ -56,18 +55,16 @@ struct SwipeCard: View {
 
     // Cached
     private var popularity: Int? {
-        if let id = track.id, let cached = api.trackPopularity[id] { return cached }
+        if let id = track.id, let cached = env.api.trackPopularity[id] { return cached }
         return track.popularity
     }
     private var primaryArtistID: String? { track.artists.first?.id }
     private var genreChips: [String] {
         guard let aid = primaryArtistID,
-              let genres = api.artistGenres[aid], !genres.isEmpty else { return [] }
+              let genres = env.api.artistGenres[aid], !genres.isEmpty else { return [] }
         return Array(genres.prefix(3))
     }
 
-    private var dragTilt: Double { Double(offset.width) / 22 }
-    private var dragLift: CGFloat { 8 + min(18, abs(offset.width) / 12) }
     private let reservedPlayerHeight: CGFloat = 44
     private let cardCornerRadius: CGFloat = 18
     private let notchRadius: CGFloat = 26
@@ -172,8 +169,9 @@ struct SwipeCard: View {
                 .stroke(.white.opacity(0.18), lineWidth: 1)
         )
         .frame(width: targetWidth, height: targetHeight)
-        .rotation3DEffect(.degrees(dragTilt), axis: (x: 0, y: 1, z: 0))
-        .shadow(color: .black.opacity(0.55), radius: dragLift, y: 6)
+        // 🔁 Centralized dynamics
+        .rotation3DEffect(.degrees(SwipeDynamics.tilt(forDragX: offset.width)), axis: (x: 0, y: 1, z: 0))
+        .shadow(color: .black.opacity(0.55), radius: SwipeDynamics.lift(forDragX: offset.width), y: 6)
         .offset(x: offset.width, y: offset.height)
         .contentShape(Rectangle())
         .simultaneousGesture(
@@ -185,13 +183,12 @@ struct SwipeCard: View {
                 }
                 .onEnded { value in
                     onDragX(0)
-                    if value.translation.width > 120 { animateSwipe(.right) }
-                    else if value.translation.width < -120 { animateSwipe(.left) }
+                    if value.translation.width > SwipeDynamics.swipeThreshold { animateSwipe(.right) }
+                    else if value.translation.width < -SwipeDynamics.swipeThreshold { animateSwipe(.left) }
                     else { withAnimation(.spring) { offset = .zero } }
                 }
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
-        // Only preview resolution remains here
         .task(id: track.id ?? track.uri ?? track.name) { await resolvePreview() }
         .onDisappear { stopPlayback() }
     }
@@ -227,7 +224,7 @@ struct SwipeCard: View {
     private func resolvePreview() async {
         isResolvingPreview = true
         defer { isResolvingPreview = false }
-        let (url, wf) = await previews.resolve(for: track)
+        let (url, wf) = await env.previews.resolve(for: track)
         previewURL = url
         waveform = wf
     }

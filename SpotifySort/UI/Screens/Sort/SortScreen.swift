@@ -3,38 +3,33 @@ import SwiftUI
 enum SortMode { case liked, playlist(Playlist) }
 
 struct SortScreen: View {
-    @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var api: SpotifyAPI
-    @EnvironmentObject var router: Router
-    @EnvironmentObject var metadata: TrackMetadataService  // ← NEW
+    // Unified environment container
+    @EnvironmentObject var env: AppEnvironment
 
     let mode: SortMode
     
-    // ✅ REFACTOR: Use ViewModel with proper dependency injection
+    // ✅ ViewModel with dependency injection (keeps existing initializer signature)
     @StateObject private var viewModel: DeckViewModel
     
-    // UI-only state (not business logic)
+    // UI-only state
     @State private var showHistory = false
     @State private var isDropdownOpen = false
     @State private var showMenu = false
     
     // MARK: - Initialization
-    
+    // We keep the api/auth parameters for call-site compatibility. The VM will use them.
     init(mode: SortMode, api: SpotifyAPI, auth: AuthManager) {
         self.mode = mode
-        // Create ViewModel with proper dependencies
-        _viewModel = StateObject(wrappedValue: DeckViewModel(
-            mode: mode,
-            api: api,
-            auth: auth
-        ))
+        _viewModel = StateObject(
+            wrappedValue: DeckViewModel(mode: mode, api: api, auth: auth)
+        )
     }
 
-    // MARK: - Computed Properties
+    // MARK: - Computed
     
     private var ownedPlaylists: [Playlist] {
-        guard let me = api.user?.id else { return api.playlists }
-        return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
+        guard let me = env.api.user?.id else { return env.api.playlists }
+        return env.api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
     }
     
     /// Signature to trigger tasks when deck content changes
@@ -93,10 +88,10 @@ struct SortScreen: View {
             await viewModel.load()
         }
         
-        // 🔁 NEW: Prefetch track metadata (popularity + genres) whenever the visible deck changes
+        // Prefetch track metadata (popularity + genres) whenever the visible deck changes
         .task(id: deckSignature) {
             let visibleTracks = viewModel.deck.compactMap { $0.track }
-            await metadata.prefetch(for: visibleTracks, api: api, auth: auth)
+            await env.metadata.prefetch(for: visibleTracks, api: env.api, auth: env.auth)
         }
     }
     
@@ -156,8 +151,8 @@ struct SortScreen: View {
                 playlists: ownedPlaylists,
                 currentID: viewModel.currentPlaylistID,
                 includeLikedRow: true,
-                onSelectLiked: { router.selectLiked() },
-                onSelectPlaylist: { id in router.selectPlaylist(id) },
+                onSelectLiked: { env.router.selectLiked() },
+                onSelectPlaylist: { id in env.router.selectPlaylist(id) },
                 isOpen: $isDropdownOpen
             )
 
@@ -200,8 +195,8 @@ struct SortScreen: View {
                             isDropdownOpen = false
                         }
                     },
-                    onSelectLiked: { router.selectLiked() },
-                    onSelectPlaylist: { id in router.selectPlaylist(id) }
+                    onSelectLiked: { env.router.selectLiked() },
+                    onSelectPlaylist: { id in env.router.selectPlaylist(id) }
                 )
             }
         }
@@ -210,12 +205,13 @@ struct SortScreen: View {
     private var appMenuOverlay: some View {
         AppMenu(isOpen: $showMenu) { action in
             switch action {
-            case .liked: router.selectLiked()
+            case .liked: env.router.selectLiked()
             case .history: showHistory = true
             case .settings, .about: break
             }
         }
-        .environmentObject(auth)
+        // AppMenu expects AuthManager; provide it directly from env
+        .environmentObject(env.auth)
     }
 }
 
