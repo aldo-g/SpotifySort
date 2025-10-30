@@ -6,6 +6,7 @@ struct SortScreen: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var api: SpotifyAPI
     @EnvironmentObject var router: Router
+    @EnvironmentObject var metadata: TrackMetadataService  // ← NEW
 
     let mode: SortMode
     
@@ -34,6 +35,11 @@ struct SortScreen: View {
     private var ownedPlaylists: [Playlist] {
         guard let me = api.user?.id else { return api.playlists }
         return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
+    }
+    
+    /// Signature to trigger tasks when deck content changes
+    private var deckSignature: String {
+        viewModel.deck.map { $0.track?.id ?? $0.track?.uri ?? $0.track?.name ?? "?" }.joined(separator: "|")
     }
 
     // MARK: - Body
@@ -85,6 +91,12 @@ struct SortScreen: View {
         // Load data when view appears
         .task {
             await viewModel.load()
+        }
+        
+        // 🔁 NEW: Prefetch track metadata (popularity + genres) whenever the visible deck changes
+        .task(id: deckSignature) {
+            let visibleTracks = viewModel.deck.compactMap { $0.track }
+            await metadata.prefetch(for: visibleTracks, api: api, auth: auth)
         }
     }
     

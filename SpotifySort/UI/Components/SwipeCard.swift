@@ -7,73 +7,25 @@ enum SwipeDirection { case left, right }
 struct RoundedRectangleWithNotch: Shape {
     var cornerRadius: CGFloat
     var notchRadius: CGFloat
-    
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        
         let notchCenterX = rect.midX
         let notchBottomY = rect.maxY
-        
-        // Start from top-left, after corner radius
         path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
-        
-        // Top-left corner
-        path.addArc(
-            center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(180),
-            endAngle: .degrees(270),
-            clockwise: false
-        )
-        
-        // Top edge
+        path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
+                    radius: cornerRadius, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
         path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
-        
-        // Top-right corner
-        path.addArc(
-            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(270),
-            endAngle: .degrees(0),
-            clockwise: false
-        )
-        
-        // Right edge
+        path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
+                    radius: cornerRadius, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
-        
-        // Bottom-right corner
-        path.addArc(
-            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(0),
-            endAngle: .degrees(90),
-            clockwise: false
-        )
-        
-        // Bottom edge to notch (right side)
+        path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+                    radius: cornerRadius, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
         path.addLine(to: CGPoint(x: notchCenterX + notchRadius, y: rect.maxY))
-        
-        // Semicircular notch (inward)
-        path.addArc(
-            center: CGPoint(x: notchCenterX, y: notchBottomY),
-            radius: notchRadius,
-            startAngle: .degrees(0),
-            endAngle: .degrees(180),
-            clockwise: true
-        )
-        
-        // Bottom edge from notch (left side)
+        path.addArc(center: CGPoint(x: notchCenterX, y: notchBottomY),
+                    radius: notchRadius, startAngle: .degrees(0), endAngle: .degrees(180), clockwise: true)
         path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
-        
-        // Bottom-left corner
-        path.addArc(
-            center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
-            radius: cornerRadius,
-            startAngle: .degrees(90),
-            endAngle: .degrees(180),
-            clockwise: false
-        )
-        
+        path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+                    radius: cornerRadius, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
         path.closeSubpath()
         return path
     }
@@ -90,7 +42,7 @@ struct SwipeCard: View {
 
     @EnvironmentObject var api: SpotifyAPI
     @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var previews: PreviewResolver   // ← new service
+    @EnvironmentObject var previews: PreviewResolver   // preview service
 
     @State private var offset: CGSize = .zero
     @GestureState private var isDragging = false
@@ -110,16 +62,13 @@ struct SwipeCard: View {
     private var primaryArtistID: String? { track.artists.first?.id }
     private var genreChips: [String] {
         guard let aid = primaryArtistID,
-              let genres = api.artistGenres[aid], !genres.isEmpty
-        else { return [] }
+              let genres = api.artistGenres[aid], !genres.isEmpty else { return [] }
         return Array(genres.prefix(3))
     }
 
     private var dragTilt: Double { Double(offset.width) / 22 }
     private var dragLift: CGFloat { 8 + min(18, abs(offset.width) / 12) }
     private let reservedPlayerHeight: CGFloat = 44
-    
-    // Notch styling
     private let cardCornerRadius: CGFloat = 18
     private let notchRadius: CGFloat = 26
 
@@ -128,24 +77,20 @@ struct SwipeCard: View {
         let targetHeight = fixedSize?.height ?? 640
 
         VStack(spacing: 12) {
-            // === ART ===
+            // ART
             ZStack(alignment: .bottomTrailing) {
                 RemoteImage(url: track.album.images?.first?.url)
                     .frame(height: 260)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(.white.opacity(0.18), lineWidth: 1)
-                    )
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(.white.opacity(0.18), lineWidth: 1))
                     .overlay {
                         if isResolvingPreview && previewURL == nil {
                             ProgressView().padding(10)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
                     }
-
-                // === SHARE ICON (no container) ===
                 Button(action: shareTrack) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 18, weight: .bold))
@@ -158,28 +103,25 @@ struct SwipeCard: View {
                 .accessibilityLabel("Share track")
             }
 
-            // === INFO ===
+            // INFO
             BrickTile {
                 InfoBlock(track: track, genreChips: genreChips, addedInfoLine: addedInfoLine)
             }
 
-            // === POPULARITY ===
+            // POPULARITY
             if let pop = popularity {
                 BrickTile {
                     VStack(alignment: .leading, spacing: 8) {
                         MetaRow(system: "chart.bar.fill", text: "Spotify popularity")
-                        PopularityBar(value: Double(pop) / 100.0)
-                            .frame(height: 6)
-                        Text("\(pop)")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.7))
+                        PopularityBar(value: Double(pop) / 100.0).frame(height: 6)
+                        Text("\(pop)").font(.caption2).foregroundStyle(.white.opacity(0.7))
                     }
                 }
             }
 
             Spacer(minLength: 0)
 
-            // === PLAYER (reserved height even if no preview) ===
+            // PLAYER (reserved space)
             Group {
                 if let url = previewURL {
                     HStack(spacing: 12) {
@@ -212,7 +154,7 @@ struct SwipeCard: View {
             }
             .frame(height: reservedPlayerHeight)
             .padding(.vertical, 6)
-            .padding(.bottom, 6) // Slight adjustment for notch
+            .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(16)
@@ -246,18 +188,12 @@ struct SwipeCard: View {
                 }
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
-        // Use PreviewResolver (service) instead of direct Deezer/Waveform calls
+        // Only preview resolution remains here
         .task(id: track.id ?? track.uri ?? track.name) { await resolvePreview() }
-        .task(id: primaryArtistID) {
-            if let aid = primaryArtistID { await api.ensureArtistGenres(for: [aid], auth: auth) }
-        }
-        .task(id: track.id) {
-            if let id = track.id { await api.ensureTrackPopularity(for: [id], auth: auth) }
-        }
         .onDisappear { stopPlayback() }
     }
 
-    // MARK: - Share action
+    // Share
     private func shareTrack() {
         if let id = track.id, let url = URL(string: "https://open.spotify.com/track/\(id)") {
             presentShare(items: [url])
@@ -265,7 +201,6 @@ struct SwipeCard: View {
             presentShare(items: [track.name])
         }
     }
-
     private func presentShare(items: [Any]) {
         let av = UIActivityViewController(activityItems: items, applicationActivities: nil)
         if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -274,7 +209,7 @@ struct SwipeCard: View {
         }
     }
 
-    // MARK: - Helpers
+    // Helpers
     private var addedInfoLine: String? {
         let added = addedAt?.prefix(10) ?? ""
         if let by = addedBy, !by.isEmpty { return "Added by \(by)\(added.isEmpty ? "" : " • \(added)")" }
@@ -304,14 +239,13 @@ struct SwipeCard: View {
     private func resolvePreview() async {
         isResolvingPreview = true
         defer { isResolvingPreview = false }
-
         let (url, wf) = await previews.resolve(for: track)
         previewURL = url
         waveform = wf
     }
 }
 
-// MARK: - (helper subviews) — kept local to avoid cross-file deps
+// MARK: - Local helper subviews (unchanged)
 private struct InfoBlock: View {
     let track: Track
     let genreChips: [String]
@@ -392,7 +326,6 @@ private struct Pill: View {
     }
 }
 
-/// Simple left→right fill bar used for popularity.
 private struct PopularityBar: View {
     let value: Double   // 0...1
     var body: some View {
