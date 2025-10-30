@@ -226,6 +226,7 @@ struct SortScreen: View {
 
         switch mode {
         case .liked:
+            // ✅ REFACTORED: Use PagingHelper for warm start
             while orderedAll.count < warmStartTarget, !allDone {
                 await fetchNextPageAndMergeLiked()
             }
@@ -240,7 +241,8 @@ struct SortScreen: View {
                 orderedAll = try await api.loadAllPlaylistTracksOrdered(
                     playlistID: pl.id, auth: auth, reviewedURIs: reviewedSet
                 )
-                recomputeDuplicates()
+                // ✅ REFACTORED: Async duplicate detection off main thread
+                duplicateIDs = await DuplicateDetector.detect(orderedAll)
                 deck.removeAll()
                 nextCursor = 0
                 try? await loadNextPagePlaylist()
@@ -255,9 +257,16 @@ struct SortScreen: View {
     private var moreToLoad: Bool {
         switch mode {
         case .liked:
-            return !allDone || nextCursor < orderedAll.count
+            return PagingHelper.hasMore(
+                currentCursor: nextCursor,
+                totalCount: orderedAll.count,
+                isRemoteComplete: allDone
+            )
         case .playlist:
-            return nextCursor < orderedAll.count
+            return PagingHelper.hasMore(
+                currentCursor: nextCursor,
+                totalCount: orderedAll.count
+            )
         }
     }
 
@@ -280,7 +289,8 @@ struct SortScreen: View {
                 allDone = (nextURL == nil); return
             }
             orderedAll.append(contentsOf: result.items)
-            orderedAll.sort { a, b in rankKey(a) < rankKey(b) }
+            // ✅ REFACTORED: Use DeckRanker for sorting
+            orderedAll = DeckRanker.sort(orderedAll, reviewedIDs: reviewedSet, sessionSeed: sessionSeed)
             if nextURL == nil { allDone = true }
         } catch {
             allDone = true
@@ -289,52 +299,55 @@ struct SortScreen: View {
     }
 
     private func loadNextPageLiked() async throws {
-        let end = min(nextCursor + likedPageSize, orderedAll.count)
-        guard nextCursor < end else { return }
-        deck = Array(orderedAll.prefix(end))
-        nextCursor = end
+        // ✅ REFACTORED: Use PagingHelper for page extraction
+        guard let range = PagingHelper.nextPageRange(
+            currentCursor: nextCursor,
+            pageSize: likedPageSize,
+            totalCount: orderedAll.count
+        ) else { return }
+        
+        deck = Array(orderedAll.prefix(range.upperBound))
+        nextCursor = range.upperBound
     }
 
     private func loadNextPagePlaylist() async throws {
-        let end = min(nextCursor + playlistPageSize, orderedAll.count)
-        guard nextCursor < end else { return }
-        deck.append(contentsOf: orderedAll[nextCursor..<end])
-        nextCursor = end
+        // ✅ REFACTORED: Use PagingHelper for page extraction
+        let page = PagingHelper.extractPage(
+            from: orderedAll,
+            currentCursor: nextCursor,
+            pageSize: playlistPageSize
+        )
+        guard !page.isEmpty else { return }
+        
+        deck.append(contentsOf: page)
+        nextCursor += page.count
     }
 
     private func topUpIfNeeded(force: Bool = false) async {
-        let remaining = deck.count - topIndex
-        guard force || remaining <= 5 else { return }
+        // ✅ REFACTORED: Use PagingHelper for threshold check
+        let shouldLoad = force || PagingHelper.shouldTopUp(
+            currentPosition: topIndex,
+            deckSize: deck.count,
+            threshold: 5
+        )
+        guard shouldLoad else { return }
+        
         switch mode {
         case .liked: try? await loadNextPageLiked()
         case .playlist: try? await loadNextPagePlaylist()
         }
     }
 
-    // MARK: - Dedupe / Ranking
-    private func recomputeDuplicates() {
-        var counts: [String: Int] = [:]
-        for it in orderedAll {
-            if let id = it.track?.id { counts[id, default: 0] += 1 }
-        }
-        duplicateIDs = Set(counts.filter { $0.value > 1 }.map { $0.key })
-    }
+    // MARK: - Dedupe
 
     private func isDuplicate(trackID: String?) -> Bool {
         guard let id = trackID else { return false }
         return duplicateIDs.contains(id)
     }
 
-    private func rankKey(_ item: PlaylistTrack) -> (Int, UInt64) {
-        let reviewed = isReviewed(item) ? 1 : 0
-        let id = item.track?.id ?? item.track?.uri ?? UUID().uuidString
-        return (reviewed, fnv1a64(sessionSeed + "|" + id))
-    }
-
+    // ✅ REFACTORED: Simplified to delegate to DeckRanker
     private func isReviewed(_ item: PlaylistTrack) -> Bool {
-        if let id = item.track?.id { return reviewedSet.contains(id) }
-        if let uri = item.track?.uri { return reviewedSet.contains(uri) }
-        return false
+        DeckRanker.isReviewed(item, in: reviewedSet)
     }
 
     // MARK: - Actions (auto-commit)
@@ -403,14 +416,6 @@ struct SortScreen: View {
             print("Remove from playlist failed:", error)
         }
     }
-}
-
-// Tiny hash (FNV-1a 64-bit)
-private func fnv1a64(_ s: String) -> UInt64 {
-    var hash: UInt64 = 0xcbf29ce484222325
-    let prime: UInt64 = 0x100000001b3
-    for byte in s.utf8 { hash ^= UInt64(byte); hash &*= prime }
-    return hash
 }
 
 // === UPDATED: glass icon button to blend with chip/tiles ===
