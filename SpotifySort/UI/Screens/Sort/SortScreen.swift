@@ -8,75 +8,46 @@ struct SortScreen: View {
     @EnvironmentObject var router: Router
 
     let mode: SortMode
-
-    // Shared deck state
-    @State private var orderedAll: [PlaylistTrack] = []
-    @State private var deck: [PlaylistTrack] = []
-    @State private var nextCursor: Int = 0
-    @State private var topIndex: Int = 0
-    @State private var isLoading = true
+    
+    // ✅ REFACTOR: Use ViewModel with proper dependency injection
+    @StateObject private var viewModel: DeckViewModel
+    
+    // UI-only state (not business logic)
     @State private var showHistory = false
     @State private var isDropdownOpen = false
-
-    // Global menu overlay
     @State private var showMenu = false
-
-    // Liked-only paging/warm-start
-    @State private var nextURL: String? = nil
-    @State private var isFetching = false
-    @State private var allDone = false
-    private let warmStartTarget = 100
-    private let likedPageSize = 20
-    private let playlistPageSize = 20
-    private let sessionSeed = UUID().uuidString
-
-    // Dedupe/Reviewed
-    @State private var reviewedSet: Set<String> = []
-    @State private var duplicateIDs: Set<String> = []
-
-    // Edge glow
-    @State private var dragX: CGFloat = 0
-
-    private var listKey: String {
-        switch mode {
-        case .liked: return "liked"
-        case .playlist(let pl): return "playlist:\(pl.id)"
-        }
+    
+    // MARK: - Initialization
+    
+    init(mode: SortMode, api: SpotifyAPI, auth: AuthManager) {
+        self.mode = mode
+        // Create ViewModel with proper dependencies
+        _viewModel = StateObject(wrappedValue: DeckViewModel(
+            mode: mode,
+            api: api,
+            auth: auth
+        ))
     }
 
+    // MARK: - Computed Properties
+    
     private var ownedPlaylists: [Playlist] {
         guard let me = api.user?.id else { return api.playlists }
         return api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
     }
 
-    private var chipTitle: String {
-        switch mode {
-        case .liked: return "Liked Songs"
-        case .playlist(let pl): return pl.name
-        }
-    }
-
-    private var currentPlaylistID: String? {
-        if case .playlist(let pl) = mode { return pl.id }
-        return nil
-    }
+    // MARK: - Body
 
     var body: some View {
         ZStack {
             SelectrBackground {
                 VStack(spacing: 12) {
-                    if isLoading {
-                        ProgressView(mode.isLiked ? "Preparing deck…" : "Loading…")
-                            .task { await initialLoad() }
-                    } else if topIndex >= deck.count {
-                        if moreToLoad {
-                            ProgressView("Loading more…").task { await topUpIfNeeded(force: true) }
-                        } else {
-                            completionView
-                        }
+                    if viewModel.isLoading {
+                        loadingView
+                    } else if viewModel.isComplete {
+                        completionView
                     } else {
-                        // NUDGE: lift the card stack slightly
-                        deckStack
+                        deckView
                             .padding(.top, -50)
                             .allowsHitTesting(!isDropdownOpen)
                             .frame(maxHeight: .infinity)
@@ -85,118 +56,44 @@ struct SortScreen: View {
                 .padding(.top, 8)
             }
 
-            EdgeGlows(intensityLeft: leftIntensity, intensityRight: rightIntensity)
-                .allowsHitTesting(false)
+            EdgeGlows(
+                intensityLeft: viewModel.leftIntensity,
+                intensityRight: viewModel.rightIntensity
+            )
+            .allowsHitTesting(false)
         }
         .navigationBarBackButtonHidden(true)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .tint(.white)
-
-        // === TOP BAR ===
+        
+        // Top bar with playlist selector
         .safeAreaInset(edge: .top, spacing: 0) {
-            ZStack {
-                // Centered dropdown chip
-                PlaylistSelector(
-                    title: chipTitle,
-                    playlists: ownedPlaylists,
-                    currentID: currentPlaylistID,
-                    includeLikedRow: true,
-                    onSelectLiked: { router.selectLiked() },
-                    onSelectPlaylist: { id in router.selectPlaylist(id) },
-                    isOpen: $isDropdownOpen
-                )
-
-                // Left menu & right history — glass buttons re-styled to blend with chip
-                HStack {
-                    GlassIconButton(system: "line.3.horizontal") {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
-                            showMenu.toggle()
-                        }
-                    }
-
-                    Spacer()
-
-                    GlassIconButton(system: "clock.arrow.circlepath") {
-                        showHistory = true
-                    }
-                    .accessibilityLabel("History")
-                }
-                .padding(.horizontal, 16)
-            }
-            .padding(.top, 10)
-            .padding(.bottom, 8)
-            .background(Color.clear)
-            .zIndex(2001)
+            topBar
         }
 
         // Dropdown overlay
         .overlayPreferenceValue(ChipBoundsKey.self) { anchor in
-            GeometryReader { proxy in
-                if isDropdownOpen, let a = anchor {
-                    let rect = proxy[a]
-                    let width = max(rect.width, 260)
-                    DropdownPanel(
-                        width: width,
-                        origin: CGPoint(x: rect.midX - width/2, y: rect.maxY + 8),
-                        playlists: ownedPlaylists,
-                        currentID: currentPlaylistID,
-                        includeLikedRow: true,
-                        onDismiss: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
-                                isDropdownOpen = false
-                            }
-                        },
-                        onSelectLiked: { router.selectLiked() },
-                        onSelectPlaylist: { id in router.selectPlaylist(id) }
-                    )
-                }
-            }
+            dropdownOverlay(anchor: anchor)
         }
+        
+        // Sheets & overlays
         .sheet(isPresented: $showHistory) { HistoryView() }
-
-        // Full-screen menu sheet
-        .overlay(
-            AppMenu(isOpen: $showMenu) { action in
-                switch action {
-                case .liked: router.selectLiked()
-                case .history: showHistory = true
-                case .settings, .about: break
-                }
-            }
-            .environmentObject(auth),
-            alignment: .topLeading
-        )
-        .onChange(of: topIndex) { Task { await topUpIfNeeded() } }
-    }
-
-    // MARK: Glow intensity
-    private var leftIntensity: CGFloat { max(0, min(1, (-dragX) / 120)) }
-    private var rightIntensity: CGFloat { max(0, min(1, (dragX) / 120)) }
-
-    // MARK: Deck
-    private var deckStack: some View {
-        ZStack {
-            ForEach(Array(deck.enumerated()).reversed(), id: \.element.id) { idx, item in
-                if idx >= topIndex, let tr = item.track {
-                    let isTop = (item.id == deck[topIndex].id)
-                    SwipeCard(
-                        track: tr,
-                        addedAt: item.added_at,
-                        addedBy: item.added_by?.id,
-                        isDuplicate: isDuplicate(trackID: tr.id),
-                        onSwipe: { dir in onSwipe(direction: dir, item: item) },
-                        onDragX: isTop ? { dragX = $0 } : { _ in }
-                    )
-                    .padding(.horizontal, 16)
-                    .zIndex(isTop ? 1 : 0)
-                }
-            }
+        .overlay(appMenuOverlay, alignment: .topLeading)
+        
+        // Load data when view appears
+        .task {
+            await viewModel.load()
         }
     }
-
-    // MARK: Completion
+    
+    // MARK: - Subviews
+    
+    private var loadingView: some View {
+        ProgressView(mode.isLiked ? "Preparing deck…" : "Loading…")
+    }
+    
     private var completionView: some View {
         Group {
             switch mode {
@@ -216,205 +113,139 @@ struct SortScreen: View {
             }
         }
     }
-
-    // MARK: - Loading / Paging
-    private func initialLoad() async {
-        if api.user == nil { try? await api.loadMe(auth: auth) }
-        if api.playlists.isEmpty { try? await api.loadPlaylists(auth: auth) }
-
-        reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
-
-        switch mode {
-        case .liked:
-            // ✅ STEP 1b: Use PagingHelper for warm start check
-            while orderedAll.count < warmStartTarget, !allDone {
-                await fetchNextPageAndMergeLiked()
+    
+    private var deckView: some View {
+        ZStack {
+            ForEach(Array(viewModel.deck.enumerated()).reversed(), id: \.element.id) { idx, item in
+                if idx >= viewModel.topIndex, let tr = item.track {
+                    let isTop = (item.id == viewModel.deck[viewModel.topIndex].id)
+                    SwipeCard(
+                        track: tr,
+                        addedAt: item.added_at,
+                        addedBy: item.added_by?.id,
+                        isDuplicate: viewModel.isDuplicate(trackID: tr.id),
+                        onSwipe: { dir in
+                            Task { await viewModel.swipe(direction: dir, item: item) }
+                        },
+                        onDragX: isTop ? { viewModel.updateDragX($0) } : { _ in }
+                    )
+                    .padding(.horizontal, 16)
+                    .zIndex(isTop ? 1 : 0)
+                }
             }
-            nextCursor = 0
-            deck.removeAll()
-            try? await loadNextPageLiked()
-            isLoading = false
-            Task.detached { await backgroundFetchRemainingLiked() }
+        }
+    }
+    
+    private var topBar: some View {
+        ZStack {
+            // Centered dropdown chip
+            PlaylistSelector(
+                title: viewModel.chipTitle,
+                playlists: ownedPlaylists,
+                currentID: viewModel.currentPlaylistID,
+                includeLikedRow: true,
+                onSelectLiked: { router.selectLiked() },
+                onSelectPlaylist: { id in router.selectPlaylist(id) },
+                isOpen: $isDropdownOpen
+            )
 
-        case .playlist(let pl):
-            do {
-                orderedAll = try await api.loadAllPlaylistTracksOrdered(
-                    playlistID: pl.id, auth: auth, reviewedURIs: reviewedSet
+            // Left menu & right history
+            HStack {
+                GlassIconButton(system: "line.3.horizontal") {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                        showMenu.toggle()
+                    }
+                }
+
+                Spacer()
+
+                GlassIconButton(system: "clock.arrow.circlepath") {
+                    showHistory = true
+                }
+                .accessibilityLabel("History")
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(Color.clear)
+        .zIndex(2001)
+    }
+    
+    private func dropdownOverlay(anchor: Anchor<CGRect>?) -> some View {
+        GeometryReader { proxy in
+            if isDropdownOpen, let a = anchor {
+                let rect = proxy[a]
+                let width = max(rect.width, 260)
+                DropdownPanel(
+                    width: width,
+                    origin: CGPoint(x: rect.midX - width/2, y: rect.maxY + 8),
+                    playlists: ownedPlaylists,
+                    currentID: viewModel.currentPlaylistID,
+                    includeLikedRow: true,
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                            isDropdownOpen = false
+                        }
+                    },
+                    onSelectLiked: { router.selectLiked() },
+                    onSelectPlaylist: { id in router.selectPlaylist(id) }
                 )
-                // ✅ STEP 1a: Use DuplicateDetector (async, off main thread)
-                duplicateIDs = await DuplicateDetector.detect(orderedAll)
-                deck.removeAll()
-                nextCursor = 0
-                try? await loadNextPagePlaylist()
-                isLoading = false
-            } catch {
-                print(error)
-                isLoading = false
             }
         }
     }
-
-    // ✅ STEP 1b: Use PagingHelper for "has more" logic
-    private var moreToLoad: Bool {
-        switch mode {
-        case .liked:
-            return PagingHelper.hasMore(
-                currentCursor: nextCursor,
-                totalCount: orderedAll.count,
-                isRemoteComplete: allDone
-            )
-        case .playlist:
-            return PagingHelper.hasMore(
-                currentCursor: nextCursor,
-                totalCount: orderedAll.count
-            )
-        }
-    }
-
-    private func backgroundFetchRemainingLiked() async {
-        while !allDone {
-            await fetchNextPageAndMergeLiked()
-            await topUpIfNeeded()
-        }
-    }
-
-    private func fetchNextPageAndMergeLiked() async {
-        guard !isFetching, !allDone else { return }
-        isFetching = true
-        defer { isFetching = false }
-
-        do {
-            let result = try await api.fetchSavedTracksPage(auth: auth, nextURL: nextURL)
-            nextURL = result.next
-            if result.items.isEmpty {
-                allDone = (nextURL == nil); return
-            }
-            orderedAll.append(contentsOf: result.items)
-            // ✅ STEP 1c: Use DeckRanker for sorting
-            orderedAll = DeckRanker.sort(orderedAll, reviewedIDs: reviewedSet, sessionSeed: sessionSeed)
-            if nextURL == nil { allDone = true }
-        } catch {
-            allDone = true
-            print("SavedTracks paging error: \(error)")
-        }
-    }
-
-    private func loadNextPageLiked() async throws {
-        // ✅ STEP 1b: Use PagingHelper for page extraction
-        guard let range = PagingHelper.nextPageRange(
-            currentCursor: nextCursor,
-            pageSize: likedPageSize,
-            totalCount: orderedAll.count
-        ) else { return }
-        
-        deck = Array(orderedAll.prefix(range.upperBound))
-        nextCursor = range.upperBound
-    }
-
-    private func loadNextPagePlaylist() async throws {
-        // ✅ STEP 1b: Use PagingHelper for page extraction
-        let page = PagingHelper.extractPage(
-            from: orderedAll,
-            currentCursor: nextCursor,
-            pageSize: playlistPageSize
-        )
-        guard !page.isEmpty else { return }
-        
-        deck.append(contentsOf: page)
-        nextCursor += page.count
-    }
-
-    private func topUpIfNeeded(force: Bool = false) async {
-        // ✅ STEP 1b: Use PagingHelper for threshold check
-        let shouldLoad = force || PagingHelper.shouldTopUp(
-            currentPosition: topIndex,
-            deckSize: deck.count,
-            threshold: 5
-        )
-        guard shouldLoad else { return }
-        
-        switch mode {
-        case .liked: try? await loadNextPageLiked()
-        case .playlist: try? await loadNextPagePlaylist()
-        }
-    }
-
-    // MARK: - Dedupe
-
-    private func isDuplicate(trackID: String?) -> Bool {
-        guard let id = trackID else { return false }
-        return duplicateIDs.contains(id)
-    }
-
-    // MARK: - Actions (auto-commit)
-    private func onSwipe(direction: SwipeDirection, item: PlaylistTrack) {
-        dragX = 0
-
-        switch mode {
-        case .liked:
-            if let id = item.track?.id {
-                ReviewStore.shared.addReviewed(id, for: listKey)
-                reviewedSet.insert(id)
-            } else if let uri = item.track?.uri {
-                ReviewStore.shared.addReviewed(uri, for: listKey)
-            }
-            if direction == .left, let tr = item.track, let id = tr.id {
-                Task { await removeFromLiked(id: id, track: tr) }
-            }
-
-        case .playlist(let pl):
-            if let uri = item.track?.uri { ReviewStore.shared.addReviewed(uri, for: listKey) }
-            if direction == .left, let tr = item.track, let uri = tr.uri {
-                Task { await removeFromPlaylist(plID: pl.id, uri: uri, track: tr) }
+    
+    private var appMenuOverlay: some View {
+        AppMenu(isOpen: $showMenu) { action in
+            switch action {
+            case .liked: router.selectLiked()
+            case .history: showHistory = true
+            case .settings, .about: break
             }
         }
-
-        topIndex += 1
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        .environmentObject(auth)
     }
+}
 
-    private func removeFromLiked(id: String, track: Track) async {
-        do {
-            try await api.batchUnsaveTracks(trackIDs: [id], auth: auth)
-            let entry = RemovalEntry(
-                source: .liked,
-                playlistID: nil,
-                playlistName: nil,
-                trackID: track.id,
-                trackURI: track.uri,
-                trackName: track.name,
-                artists: track.artists.map { $0.name },
-                album: track.album.name,
-                artworkURL: track.album.images?.first?.url
-            )
-            await MainActor.run { HistoryStore.shared.add([entry]) }
-        } catch {
-            print("Unsave failed:", error)
-        }
-    }
+// MARK: - Edge Glows
 
-    private func removeFromPlaylist(plID: String, uri: String, track: Track) async {
-        do {
-            try await api.batchRemoveTracks(playlistID: plID, uris: [uri], auth: auth)
-            let entry = RemovalEntry(
-                source: .playlist,
-                playlistID: plID,
-                playlistName: (currentPlaylistID == plID ? chipTitle : nil),
-                trackID: track.id,
-                trackURI: track.uri,
-                trackName: track.name,
-                artists: track.artists.map { $0.name },
-                album: track.album.name,
-                artworkURL: track.album.images?.first?.url
-            )
-            await MainActor.run { HistoryStore.shared.add([entry]) }
-        } catch {
-            print("Remove from playlist failed:", error)
+private struct EdgeGlows: View {
+    var intensityLeft: CGFloat
+    var intensityRight: CGFloat
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                LinearGradient(
+                    colors: [Color.red.opacity(0.55 * intensityLeft),
+                             Color.red.opacity(0.28 * intensityLeft),
+                             .clear],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: geo.size.width * 0.42)
+                .blur(radius: 22)
+                .blendMode(.screen)
+                .ignoresSafeArea()
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                LinearGradient(
+                    colors: [Color.green.opacity(0.55 * intensityRight),
+                             Color.green.opacity(0.28 * intensityRight),
+                             .clear],
+                    startPoint: .trailing, endPoint: .leading
+                )
+                .frame(width: geo.size.width * 0.42)
+                .blur(radius: 22)
+                .blendMode(.screen)
+                .ignoresSafeArea()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
     }
 }
 
-// === Glass icon button (unchanged) ===
+// MARK: - Glass Icon Button
+
 private struct GlassIconButton: View {
     let system: String
     let action: () -> Void
@@ -467,42 +298,11 @@ private struct GlassIconButton: View {
     }
 }
 
-// MARK: - Edge glow (unchanged)
-private struct EdgeGlows: View {
-    var intensityLeft: CGFloat
-    var intensityRight: CGFloat
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                LinearGradient(
-                    colors: [Color.red.opacity(0.55 * intensityLeft),
-                             Color.red.opacity(0.28 * intensityLeft),
-                             .clear],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: geo.size.width * 0.42)
-                .blur(radius: 22)
-                .blendMode(.screen)
-                .ignoresSafeArea()
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                LinearGradient(
-                    colors: [Color.green.opacity(0.55 * intensityRight),
-                             Color.green.opacity(0.28 * intensityRight),
-                             .clear],
-                    startPoint: .trailing, endPoint: .leading
-                )
-                .frame(width: geo.size.width * 0.42)
-                .blur(radius: 22)
-                .blendMode(.screen)
-                .ignoresSafeArea()
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
-    }
-}
+// MARK: - Helper Extensions
 
 private extension SortMode {
-    var isLiked: Bool { if case .liked = self { return true } else { return false } }
+    var isLiked: Bool {
+        if case .liked = self { return true }
+        else { return false }
+    }
 }

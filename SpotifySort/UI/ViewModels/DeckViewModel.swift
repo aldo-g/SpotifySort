@@ -33,23 +33,10 @@ final class DeckViewModel: ObservableObject {
     private let likedPageSize = 20
     private let playlistPageSize = 20
     
-    // MARK: - Computed Properties
-    
     // Cached value updated during load/paging
     @Published private(set) var hasMore: Bool = false
     
-    private func updateHasMore() async {
-        let result: Bool
-        switch mode {
-        case .liked:
-            guard let service = likedService else { result = false; return }
-            result = await service.hasMore(cursor: nextCursor)
-        case .playlist:
-            guard let service = playlistService else { result = false; return }
-            result = await service.hasMore(cursor: nextCursor)
-        }
-        hasMore = result
-    }
+    // MARK: - Computed Properties
     
     var leftIntensity: CGFloat {
         max(0, min(1, (-dragX) / 120))
@@ -57,6 +44,22 @@ final class DeckViewModel: ObservableObject {
     
     var rightIntensity: CGFloat {
         max(0, min(1, dragX / 120))
+    }
+    
+    var isComplete: Bool {
+        !isLoading && topIndex >= deck.count && !hasMore
+    }
+    
+    var chipTitle: String {
+        switch mode {
+        case .liked: return "Liked Songs"
+        case .playlist(let pl): return pl.name
+        }
+    }
+    
+    var currentPlaylistID: String? {
+        if case .playlist(let pl) = mode { return pl.id }
+        return nil
     }
     
     // MARK: - Initialization
@@ -208,6 +211,19 @@ final class DeckViewModel: ObservableObject {
     }
     
     // MARK: - Private - Paging
+    
+    private func updateHasMore() async {
+        let result: Bool
+        switch mode {
+        case .liked:
+            guard let service = likedService else { result = false; return }
+            result = await service.hasMore(cursor: nextCursor)
+        case .playlist:
+            guard let service = playlistService else { result = false; return }
+            result = await service.hasMore(cursor: nextCursor)
+        }
+        hasMore = result
+    }
     
     private func topUpIfNeeded() async {
         let shouldLoad = PagingHelper.shouldTopUp(
