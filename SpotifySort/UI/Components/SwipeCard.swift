@@ -7,25 +7,73 @@ enum SwipeDirection { case left, right }
 struct RoundedRectangleWithNotch: Shape {
     var cornerRadius: CGFloat
     var notchRadius: CGFloat
+    
     func path(in rect: CGRect) -> Path {
         var path = Path()
+        
         let notchCenterX = rect.midX
         let notchBottomY = rect.maxY
+        
+        // Start from top-left, after corner radius
         path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
-        path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
-                    radius: cornerRadius, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        
+        // Top-left corner
+        path.addArc(
+            center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(180),
+            endAngle: .degrees(270),
+            clockwise: false
+        )
+        
+        // Top edge
         path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
-        path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
-                    radius: cornerRadius, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
+        
+        // Top-right corner
+        path.addArc(
+            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(270),
+            endAngle: .degrees(0),
+            clockwise: false
+        )
+        
+        // Right edge
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
-        path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
-                    radius: cornerRadius, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        
+        // Bottom-right corner
+        path.addArc(
+            center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(0),
+            endAngle: .degrees(90),
+            clockwise: false
+        )
+        
+        // Bottom edge to notch (right side)
         path.addLine(to: CGPoint(x: notchCenterX + notchRadius, y: rect.maxY))
-        path.addArc(center: CGPoint(x: notchCenterX, y: notchBottomY),
-                    radius: notchRadius, startAngle: .degrees(0), endAngle: .degrees(180), clockwise: true)
+        
+        // Semicircular notch (inward)
+        path.addArc(
+            center: CGPoint(x: notchCenterX, y: notchBottomY),
+            radius: notchRadius,
+            startAngle: .degrees(0),
+            endAngle: .degrees(180),
+            clockwise: true
+        )
+        
+        // Bottom edge from notch (left side)
         path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
-        path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
-                    radius: cornerRadius, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        
+        // Bottom-left corner
+        path.addArc(
+            center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+            radius: cornerRadius,
+            startAngle: .degrees(90),
+            endAngle: .degrees(180),
+            clockwise: false
+        )
+        
         path.closeSubpath()
         return path
     }
@@ -78,30 +126,7 @@ struct SwipeCard: View {
 
         VStack(spacing: 12) {
             // ART
-            ZStack(alignment: .bottomTrailing) {
-                RemoteImage(url: track.album.images?.first?.url)
-                    .frame(height: 260)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(.white.opacity(0.18), lineWidth: 1))
-                    .overlay {
-                        if isResolvingPreview && previewURL == nil {
-                            ProgressView().padding(10)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                    }
-                Button(action: shareTrack) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
-                        .padding(10)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Share track")
-            }
+            ZstackArt
 
             // INFO
             BrickTile {
@@ -122,39 +147,7 @@ struct SwipeCard: View {
             Spacer(minLength: 0)
 
             // PLAYER (reserved space)
-            Group {
-                if let url = previewURL {
-                    HStack(spacing: 12) {
-                        Button {
-                            if isPlaying { stopPlayback() }
-                            else { PreviewPlayer.shared.play(url); isPlaying = true }
-                        } label: {
-                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.black)
-                                .frame(width: 32, height: 32)
-                                .background(.white, in: Circle())
-                                .overlay(Circle().stroke(.white, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-
-                        if let wf = waveform {
-                            ScrollingWaveform(samples: wf, progress: player.progress, height: 26)
-                                .opacity(isPlaying ? 1 : 0.9)
-                        } else {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(.white.opacity(0.12))
-                                .frame(height: 26)
-                                .overlay(ProgressView().scaleEffect(0.7))
-                        }
-                    }
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(height: reservedPlayerHeight)
-            .padding(.vertical, 6)
-            .padding(.bottom, 6)
+            PlayerRow
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(16)
@@ -193,23 +186,76 @@ struct SwipeCard: View {
         .onDisappear { stopPlayback() }
     }
 
-    // Share
-    private func shareTrack() {
-        if let id = track.id, let url = URL(string: "https://open.spotify.com/track/\(id)") {
-            presentShare(items: [url])
-        } else {
-            presentShare(items: [track.name])
-        }
-    }
-    private func presentShare(items: [Any]) {
-        let av = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let root = scene.keyWindow?.rootViewController {
-            root.present(av, animated: true)
+    // MARK: - Extracted bits
+
+    private var ZstackArt: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RemoteImage(url: track.album.images?.first?.url)
+                .frame(height: 260)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(.white.opacity(0.18), lineWidth: 1))
+                .overlay {
+                    if isResolvingPreview && previewURL == nil {
+                        ProgressView().padding(10)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                }
+
+            Button {
+                ShareService.share(track: track)          // ← moved to service
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
+                    .padding(10)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Share track")
         }
     }
 
-    // Helpers
+    private var PlayerRow: some View {
+        Group {
+            if let url = previewURL {
+                HStack(spacing: 12) {
+                    Button {
+                        if isPlaying { stopPlayback() }
+                        else { PreviewPlayer.shared.play(url); isPlaying = true }
+                    } label: {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.black)
+                            .frame(width: 32, height: 32)
+                            .background(.white, in: Circle())
+                            .overlay(Circle().stroke(.white, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+
+                    if let wf = waveform {
+                        ScrollingWaveform(samples: wf, progress: player.progress, height: 26)
+                            .opacity(isPlaying ? 1 : 0.9)
+                    } else {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(.white.opacity(0.12))
+                            .frame(height: 26)
+                            .overlay(ProgressView().scaleEffect(0.7))
+                    }
+                }
+            } else {
+                Color.clear
+            }
+        }
+        .frame(height: reservedPlayerHeight)
+        .padding(.vertical, 6)
+        .padding(.bottom, 6)
+    }
+
+    // MARK: - Helpers
+
     private var addedInfoLine: String? {
         let added = addedAt?.prefix(10) ?? ""
         if let by = addedBy, !by.isEmpty { return "Added by \(by)\(added.isEmpty ? "" : " • \(added)")" }
@@ -226,7 +272,7 @@ struct SwipeCard: View {
             onSwipe(dir)
             offset = .zero
         }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.impactMedium()                        // ← moved to service
     }
 
     private func stopPlayback() {
