@@ -226,7 +226,7 @@ struct SortScreen: View {
 
         switch mode {
         case .liked:
-            // ✅ REFACTORED: Use PagingHelper for warm start
+            // ✅ STEP 1b: Use PagingHelper for warm start check
             while orderedAll.count < warmStartTarget, !allDone {
                 await fetchNextPageAndMergeLiked()
             }
@@ -241,7 +241,7 @@ struct SortScreen: View {
                 orderedAll = try await api.loadAllPlaylistTracksOrdered(
                     playlistID: pl.id, auth: auth, reviewedURIs: reviewedSet
                 )
-                // ✅ REFACTORED: Async duplicate detection off main thread
+                // ✅ STEP 1a: Use DuplicateDetector (async, off main thread)
                 duplicateIDs = await DuplicateDetector.detect(orderedAll)
                 deck.removeAll()
                 nextCursor = 0
@@ -254,6 +254,7 @@ struct SortScreen: View {
         }
     }
 
+    // ✅ STEP 1b: Use PagingHelper for "has more" logic
     private var moreToLoad: Bool {
         switch mode {
         case .liked:
@@ -289,7 +290,7 @@ struct SortScreen: View {
                 allDone = (nextURL == nil); return
             }
             orderedAll.append(contentsOf: result.items)
-            // ✅ REFACTORED: Use DeckRanker for sorting
+            // ✅ STEP 1c: Use DeckRanker for sorting
             orderedAll = DeckRanker.sort(orderedAll, reviewedIDs: reviewedSet, sessionSeed: sessionSeed)
             if nextURL == nil { allDone = true }
         } catch {
@@ -299,7 +300,7 @@ struct SortScreen: View {
     }
 
     private func loadNextPageLiked() async throws {
-        // ✅ REFACTORED: Use PagingHelper for page extraction
+        // ✅ STEP 1b: Use PagingHelper for page extraction
         guard let range = PagingHelper.nextPageRange(
             currentCursor: nextCursor,
             pageSize: likedPageSize,
@@ -311,7 +312,7 @@ struct SortScreen: View {
     }
 
     private func loadNextPagePlaylist() async throws {
-        // ✅ REFACTORED: Use PagingHelper for page extraction
+        // ✅ STEP 1b: Use PagingHelper for page extraction
         let page = PagingHelper.extractPage(
             from: orderedAll,
             currentCursor: nextCursor,
@@ -324,7 +325,7 @@ struct SortScreen: View {
     }
 
     private func topUpIfNeeded(force: Bool = false) async {
-        // ✅ REFACTORED: Use PagingHelper for threshold check
+        // ✅ STEP 1b: Use PagingHelper for threshold check
         let shouldLoad = force || PagingHelper.shouldTopUp(
             currentPosition: topIndex,
             deckSize: deck.count,
@@ -343,11 +344,6 @@ struct SortScreen: View {
     private func isDuplicate(trackID: String?) -> Bool {
         guard let id = trackID else { return false }
         return duplicateIDs.contains(id)
-    }
-
-    // ✅ REFACTORED: Simplified to delegate to DeckRanker
-    private func isReviewed(_ item: PlaylistTrack) -> Bool {
-        DeckRanker.isReviewed(item, in: reviewedSet)
     }
 
     // MARK: - Actions (auto-commit)
@@ -418,7 +414,7 @@ struct SortScreen: View {
     }
 }
 
-// === UPDATED: glass icon button to blend with chip/tiles ===
+// === Glass icon button (unchanged) ===
 private struct GlassIconButton: View {
     let system: String
     let action: () -> Void
@@ -431,15 +427,13 @@ private struct GlassIconButton: View {
             action()
         }) {
             ZStack {
-                // Base glass + gentle darkening (so icons stay vivid)
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Color.black.opacity(0.30)) // was 0.38 — a bit softer
+                            .fill(Color.black.opacity(0.30))
                             .blendMode(.multiply)
                     )
-                    // Subtle top highlight (matches chip)
                     .overlay(
                         LinearGradient(
                             colors: [Color.white.opacity(0.08), .clear],
@@ -447,13 +441,11 @@ private struct GlassIconButton: View {
                         )
                         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     )
-                    // Brick texture inside the glass for cohesion
                     .overlay(
                         BrickOverlay(opacity: 0.12)
                             .blendMode(.overlay)
                             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     )
-                    // Edge strokes (same language as chip)
                     .overlay(
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .stroke(.white.opacity(0.06), lineWidth: 1)
@@ -467,7 +459,7 @@ private struct GlassIconButton: View {
 
                 Image(systemName: system)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white) // stays vivid
+                    .foregroundStyle(.white)
             }
             .frame(width: size, height: size)
         }
