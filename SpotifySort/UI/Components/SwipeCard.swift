@@ -53,13 +53,13 @@ struct RoundedRectangleWithNotch: Shape {
         // Bottom edge to notch (right side)
         path.addLine(to: CGPoint(x: notchCenterX + notchRadius, y: rect.maxY))
         
-        // Semicircular notch (going inward)
+        // Semicircular notch (inward)
         path.addArc(
             center: CGPoint(x: notchCenterX, y: notchBottomY),
             radius: notchRadius,
             startAngle: .degrees(0),
             endAngle: .degrees(180),
-            clockwise: true  // clockwise = inward cut
+            clockwise: true
         )
         
         // Bottom edge from notch (left side)
@@ -74,9 +74,7 @@ struct RoundedRectangleWithNotch: Shape {
             clockwise: false
         )
         
-        // Close path
         path.closeSubpath()
-        
         return path
     }
 }
@@ -92,6 +90,7 @@ struct SwipeCard: View {
 
     @EnvironmentObject var api: SpotifyAPI
     @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var previews: PreviewResolver   // ← new service
 
     @State private var offset: CGSize = .zero
     @GestureState private var isDragging = false
@@ -114,10 +113,6 @@ struct SwipeCard: View {
               let genres = api.artistGenres[aid], !genres.isEmpty
         else { return [] }
         return Array(genres.prefix(3))
-    }
-
-    private var previewKey: String {
-        track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
     }
 
     private var dragTilt: Double { Double(offset.width) / 22 }
@@ -251,7 +246,8 @@ struct SwipeCard: View {
                 }
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
-        .task(id: track.id ?? track.uri ?? track.name) { await resolvePreviewIfNeeded() }
+        // Use PreviewResolver (service) instead of direct Deezer/Waveform calls
+        .task(id: track.id ?? track.uri ?? track.name) { await resolvePreview() }
         .task(id: primaryArtistID) {
             if let aid = primaryArtistID { await api.ensureArtistGenres(for: [aid], auth: auth) }
         }
@@ -305,37 +301,17 @@ struct SwipeCard: View {
         }
     }
 
-    private func resolvePreviewIfNeeded() async {
-        let key = previewKey
-
-        if let s = track.preview_url {
-            previewURL = s
-            Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: s) }
-            return
-        }
-        if let cached = api.previewMap[key] {
-            if let ok = await DeezerPreviewService.shared.validatePreview(urlString: cached, trackKey: key, track: track) {
-                previewURL = ok
-                _ = await MainActor.run { api.previewMap[key] = ok }
-                Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: ok) }
-                return
-            } else {
-                _ = await MainActor.run { api.previewMap.removeValue(forKey: key) }
-            }
-        }
-
+    private func resolvePreview() async {
         isResolvingPreview = true
         defer { isResolvingPreview = false }
 
-        if let deezer = await DeezerPreviewService.shared.resolvePreview(for: track) {
-            previewURL = deezer
-            _ = await MainActor.run { api.previewMap[key] = deezer }
-            Task { waveform = await WaveformStore.shared.waveform(for: key, previewURL: deezer) }
-        }
+        let (url, wf) = await previews.resolve(for: track)
+        previewURL = url
+        waveform = wf
     }
 }
 
-// MARK: - (helper subviews)
+// MARK: - (helper subviews) — kept local to avoid cross-file deps
 private struct InfoBlock: View {
     let track: Track
     let genreChips: [String]
