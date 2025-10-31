@@ -21,7 +21,7 @@ final class DeckViewModel: ObservableObject {
     
     // MARK: - Dependencies
     
-    private let api: SpotifyAPI
+    private let service: SpotifyService  // ← Changed from 'api'
     private let auth: AuthManager
     private let mode: SortMode
     private let listKey: String
@@ -59,16 +59,16 @@ final class DeckViewModel: ObservableObject {
     
     // MARK: - Initialization
     
-    init(mode: SortMode, api: SpotifyAPI, auth: AuthManager) {
+    init(mode: SortMode, service: SpotifyService, auth: AuthManager) {
         self.mode = mode
-        self.api = api
+        self.service = service
         self.auth = auth
         
         switch mode {
         case .liked:
             self.listKey = "liked"
             self.likedService = LikedSongsService(
-                api: api,
+                service: service,
                 auth: auth,
                 sessionSeed: sessionSeed,
                 warmStartTarget: 100
@@ -76,7 +76,7 @@ final class DeckViewModel: ObservableObject {
         case .playlist(let pl):
             self.listKey = "playlist:\(pl.id)"
             self.playlistService = PlaylistService(
-                api: api,
+                service: service,
                 auth: auth,
                 playlistID: pl.id
             )
@@ -88,8 +88,8 @@ final class DeckViewModel: ObservableObject {
     /// Load initial deck of cards
     func load() async {
         // Load user/playlists if needed
-        if api.user == nil { try? await api.loadMe(auth: auth) }
-        if api.playlists.isEmpty { try? await api.loadPlaylists(auth: auth) }
+        if service.user == nil { try? await service.loadMe() }
+        if service.playlists.isEmpty { try? await service.loadPlaylists() }
         
         // Load reviewed tracks
         reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
@@ -264,7 +264,7 @@ final class DeckViewModel: ObservableObject {
     
     private func removeFromLiked(id: String, track: Track) async {
         do {
-            try await api.batchUnsaveTracks(trackIDs: [id], auth: auth)
+            try await service.batchUnsaveTracks(trackIDs: [id])
             let entry = RemovalEntry(
                 source: .liked,
                 playlistID: nil,
@@ -284,7 +284,7 @@ final class DeckViewModel: ObservableObject {
     
     private func removeFromPlaylist(plID: String, uri: String, track: Track) async {
         do {
-            try await api.batchRemoveTracks(playlistID: plID, uris: [uri], auth: auth)
+            try await service.batchRemoveTracks(playlistID: plID, uris: [uri])
             let entry = RemovalEntry(
                 source: .playlist,
                 playlistID: plID,

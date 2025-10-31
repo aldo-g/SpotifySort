@@ -6,25 +6,45 @@ import Combine
 @MainActor
 final class AppEnvironment: ObservableObject {
     let auth: AuthManager
-    let api: SpotifyAPI
+    let service: SpotifyService  // ← Changed from 'api'
     let router: Router
     let previews: PreviewResolver
     let metadata: TrackMetadataService
-
+    
     private var cancellables = Set<AnyCancellable>()
 
-    init(auth: AuthManager, api: SpotifyAPI, router: Router, previews: PreviewResolver, metadata: TrackMetadataService) {
+    init(
+        auth: AuthManager,
+        service: SpotifyService,  // ← Changed from 'api'
+        router: Router,
+        previews: PreviewResolver,
+        metadata: TrackMetadataService
+    ) {
         self.auth = auth
-        self.api = api
+        self.service = service
         self.router = router
         self.previews = previews
         self.metadata = metadata
-
+        
         // Forward objectWillChange from all children
-        auth.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        api.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        router.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        previews.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        metadata.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        auth.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        
+        service.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        
+        router.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        
+        previews.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        
+        metadata.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
     }
 }

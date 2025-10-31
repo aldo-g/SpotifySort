@@ -11,7 +11,7 @@ actor LikedSongsService {
     private var isFetching = false
     private var isComplete = false
     
-    private let api: SpotifyAPI
+    private let service: SpotifyService  // ← Changed from 'api'
     private let auth: AuthManager
     private let sessionSeed: String
     private let warmStartTarget: Int
@@ -19,12 +19,12 @@ actor LikedSongsService {
     // MARK: - Initialization
     
     init(
-        api: SpotifyAPI,
+        service: SpotifyService,
         auth: AuthManager,
         sessionSeed: String,
         warmStartTarget: Int = 100
     ) {
-        self.api = api
+        self.service = service
         self.auth = auth
         self.sessionSeed = sessionSeed
         self.warmStartTarget = warmStartTarget
@@ -99,8 +99,8 @@ actor LikedSongsService {
         isFetching = true
         defer { isFetching = false }
         
-        // Fetch from API
-        let result = try await api.fetchSavedTracksPage(auth: auth, nextURL: nextURL)
+        // Fetch from service
+        let result = try await service.fetchSavedTracksPage(nextURL: nextURL)
         nextURL = result.next
         
         if result.items.isEmpty {

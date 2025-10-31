@@ -73,9 +73,9 @@ struct HistoryView: View {
         do {
             switch e.source {
             case .liked:
-                try await env.api.batchSaveTracks(trackIDs: [e.trackID!], auth: env.auth)
+                try await env.service.batchSaveTracks(trackIDs: [e.trackID!])
             case .playlist:
-                try await env.api.batchAddTracks(playlistID: e.playlistID!, uris: [e.trackURI!], auth: env.auth)
+                try await env.service.batchAddTracks(playlistID: e.playlistID!, uris: [e.trackURI!])
             }
             await MainActor.run { store.remove(id: e.id) }
             ToastCenter.shared.show("Restored")

@@ -21,15 +21,15 @@ struct SortScreen: View {
     init(mode: SortMode, env: AppEnvironment) {
         self.mode = mode
         _viewModel = StateObject(
-            wrappedValue: DeckViewModel(mode: mode, api: env.api, auth: env.auth)
+            wrappedValue: DeckViewModel(mode: mode, service: env.service, auth: env.auth)
         )
     }
 
     // MARK: - Computed
     
     private var ownedPlaylists: [Playlist] {
-        guard let me = env.api.user?.id else { return env.api.playlists }
-        return env.api.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
+        guard let me = env.service.user?.id else { return env.service.playlists }
+        return env.service.playlists.filter { $0.owner.id == me && $0.tracks.total > 0 }
     }
     
     /// Signature to trigger tasks when deck content changes
@@ -91,7 +91,7 @@ struct SortScreen: View {
         // Prefetch track metadata (popularity + genres) whenever the visible deck changes
         .task(id: deckSignature) {
             let visibleTracks = viewModel.deck.compactMap { $0.track }
-            await env.metadata.prefetch(for: visibleTracks, api: env.api, auth: env.auth)
+            await env.metadata.prefetch(for: visibleTracks, service: env.service)
         }
     }
     

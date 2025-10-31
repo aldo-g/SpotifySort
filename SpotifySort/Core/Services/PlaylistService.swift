@@ -10,18 +10,18 @@ actor PlaylistService {
     private var duplicateIDs: Set<String> = []
     private var isLoaded = false
     
-    private let api: SpotifyAPI
+    private let service: SpotifyService  // ← Changed from 'api'
     private let auth: AuthManager
     private let playlistID: String
     
     // MARK: - Initialization
     
     init(
-        api: SpotifyAPI,
+        service: SpotifyService,
         auth: AuthManager,
         playlistID: String
     ) {
-        self.api = api
+        self.service = service
         self.auth = auth
         self.playlistID = playlistID
     }
@@ -33,10 +33,9 @@ actor PlaylistService {
     func load(reviewedURIs: Set<String>) async throws {
         guard !isLoaded else { return }
         
-        // Load all tracks from API
-        orderedAll = try await api.loadAllPlaylistTracksOrdered(
+        // Load all tracks from service
+        orderedAll = try await service.loadAllPlaylistTracksOrdered(
             playlistID: playlistID,
-            auth: auth,
             reviewedURIs: reviewedURIs
         )
         

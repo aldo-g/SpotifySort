@@ -9,8 +9,8 @@ struct RootView: View {
                 NavigationStack {
                     content
                         .task {
-                            if env.api.user == nil { try? await env.api.loadMe(auth: env.auth) }
-                            if env.api.playlists.isEmpty { try? await env.api.loadPlaylists(auth: env.auth) }
+                            if env.service.user == nil { try? await env.service.loadMe() }
+                            if env.service.playlists.isEmpty { try? await env.service.loadPlaylists() }
                             if case .playlist = env.router.selection { /* keep current */ }
                             else { env.router.selectLiked() }
                         }
@@ -26,18 +26,16 @@ struct RootView: View {
     private var content: some View {
         switch env.router.selection {
         case .liked:
-            // Give Liked Songs a stable but unique identity
             SortLikedView()
                 .navigationTitle("Liked Songs")
-                .id("route-liked") // <-- forces recreation when coming from a playlist
+                .id("route-liked")
 
         case .playlist(let id):
-            if let pl = env.api.playlists.first(where: { $0.id == id }) {
-                // FORCE a new instance when the playlist id changes
+            if let pl = env.service.playlists.first(where: { $0.id == id }) {
                 SortView(playlist: pl)
-                    .id("route-playlist-\(pl.id)") // <-- key fix
+                    .id("route-playlist-\(pl.id)")
             } else {
-                ProgressView().task { try? await env.api.loadPlaylists(auth: env.auth) }
+                ProgressView().task { try? await env.service.loadPlaylists() }
             }
         }
     }

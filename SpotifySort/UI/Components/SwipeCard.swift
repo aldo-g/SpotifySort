@@ -55,13 +55,15 @@ struct SwipeCard: View {
 
     // Cached
     private var popularity: Int? {
-        if let id = track.id, let cached = env.api.trackPopularity[id] { return cached }
+        if let id = track.id, let cached = env.service.getTrackPopularity(id: id) { return cached }
         return track.popularity
     }
+
     private var primaryArtistID: String? { track.artists.first?.id }
+
     private var genreChips: [String] {
         guard let aid = primaryArtistID,
-              let genres = env.api.artistGenres[aid], !genres.isEmpty else { return [] }
+              let genres = env.service.getArtistGenres(id: aid), !genres.isEmpty else { return [] }
         return Array(genres.prefix(3))
     }
 
