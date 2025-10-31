@@ -1,5 +1,5 @@
 import Foundation
-import SwiftUI
+import Combine
 
 /// Centralizes preview-URL resolution + waveform caching for a Track.
 /// UI should not talk to Deezer/Spotify caches directly.

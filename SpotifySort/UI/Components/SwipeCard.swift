@@ -169,7 +169,6 @@ struct SwipeCard: View {
                 .stroke(.white.opacity(0.18), lineWidth: 1)
         )
         .frame(width: targetWidth, height: targetHeight)
-        // 🔁 Centralized dynamics
         .rotation3DEffect(.degrees(SwipeDynamics.tilt(forDragX: offset.width)), axis: (x: 0, y: 1, z: 0))
         .shadow(color: .black.opacity(0.55), radius: SwipeDynamics.lift(forDragX: offset.width), y: 6)
         .offset(x: offset.width, y: offset.height)
