@@ -31,13 +31,6 @@ struct SpotifySortApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                // Legacy injections (kept for compatibility while we migrate screens)
-                .environmentObject(auth)
-                .environmentObject(api)
-                .environmentObject(router)
-                .environmentObject(previews)
-                .environmentObject(metadata)
-                // New unified environment
                 .environmentObject(env)
                 .task { await auth.resumeSession() }
                 .onOpenURL { url in auth.handleRedirect(url: url) }

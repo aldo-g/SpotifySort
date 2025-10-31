@@ -1,14 +1,12 @@
 import SwiftUI
 
 struct SortLikedView: View {
-    @EnvironmentObject var api: SpotifyAPI
-    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var env: AppEnvironment
     
     var body: some View {
         SortScreen(
             mode: .liked,
-            api: api,
-            auth: auth
+            env: env
         )
     }
 }

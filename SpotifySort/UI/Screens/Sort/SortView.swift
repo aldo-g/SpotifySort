@@ -1,16 +1,13 @@
 import SwiftUI
 
 struct SortView: View {
-    @EnvironmentObject var api: SpotifyAPI
-    @EnvironmentObject var auth: AuthManager
-    
+    @EnvironmentObject var env: AppEnvironment
     let playlist: Playlist
     
     var body: some View {
         SortScreen(
             mode: .playlist(playlist),
-            api: api,
-            auth: auth
+            env: env
         )
     }
 }

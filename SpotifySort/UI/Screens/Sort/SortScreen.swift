@@ -18,10 +18,10 @@ struct SortScreen: View {
     
     // MARK: - Initialization
     // We keep the api/auth parameters for call-site compatibility. The VM will use them.
-    init(mode: SortMode, api: SpotifyAPI, auth: AuthManager) {
+    init(mode: SortMode, env: AppEnvironment) {
         self.mode = mode
         _viewModel = StateObject(
-            wrappedValue: DeckViewModel(mode: mode, api: api, auth: auth)
+            wrappedValue: DeckViewModel(mode: mode, api: env.api, auth: env.auth)
         )
     }
 

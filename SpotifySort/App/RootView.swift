@@ -1,20 +1,18 @@
 import SwiftUI
 
 struct RootView: View {
-    @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var api: SpotifyAPI
-    @EnvironmentObject var router: Router
+    @EnvironmentObject var env: AppEnvironment
 
     var body: some View {
         Group {
-            if auth.isLoggedIn() {
+            if env.auth.isLoggedIn() {
                 NavigationStack {
                     content
                         .task {
-                            if api.user == nil { try? await api.loadMe(auth: auth) }
-                            if api.playlists.isEmpty { try? await api.loadPlaylists(auth: auth) }
-                            if case .playlist = router.selection { /* keep current */ }
-                            else { router.selectLiked() }
+                            if env.api.user == nil { try? await env.api.loadMe(auth: env.auth) }
+                            if env.api.playlists.isEmpty { try? await env.api.loadPlaylists(auth: env.auth) }
+                            if case .playlist = env.router.selection { /* keep current */ }
+                            else { env.router.selectLiked() }
                         }
                 }
             } else {
@@ -26,7 +24,7 @@ struct RootView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch router.selection {
+        switch env.router.selection {
         case .liked:
             // Give Liked Songs a stable but unique identity
             SortLikedView()
@@ -34,12 +32,12 @@ struct RootView: View {
                 .id("route-liked") // <-- forces recreation when coming from a playlist
 
         case .playlist(let id):
-            if let pl = api.playlists.first(where: { $0.id == id }) {
+            if let pl = env.api.playlists.first(where: { $0.id == id }) {
                 // FORCE a new instance when the playlist id changes
                 SortView(playlist: pl)
                     .id("route-playlist-\(pl.id)") // <-- key fix
             } else {
-                ProgressView().task { try? await api.loadPlaylists(auth: auth) }
+                ProgressView().task { try? await env.api.loadPlaylists(auth: env.auth) }
             }
         }
     }
@@ -48,11 +46,11 @@ struct RootView: View {
         guard let host = url.host else { return }
         switch host {
         case "liked":
-            router.selectLiked()
+            env.router.selectLiked()
         case "playlist":
             if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
                let id = comps.queryItems?.first(where: { $0.name == "id" })?.value {
-                router.selectPlaylist(id)
+                env.router.selectPlaylist(id)
             }
         default: break
         }

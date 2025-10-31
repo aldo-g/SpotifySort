@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct LoginView: View {
-    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var env: AppEnvironment
     @State private var isStartingLogin = false
 
     var body: some View {
@@ -35,7 +35,7 @@ struct LoginView: View {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     isStartingLogin = true
-                    auth.login()
+                    env.auth.login()
                 } label: {
                     Image("Full_Logo_Green_RGB")
                         .resizable()

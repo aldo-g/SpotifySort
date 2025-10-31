@@ -2,8 +2,7 @@ import SwiftUI
 
 struct HistoryView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var api: SpotifyAPI
+    @EnvironmentObject var env: AppEnvironment
     @ObservedObject var store = HistoryStore.shared
 
     @State private var restoring: Set<UUID> = []
@@ -74,9 +73,9 @@ struct HistoryView: View {
         do {
             switch e.source {
             case .liked:
-                try await api.batchSaveTracks(trackIDs: [e.trackID!], auth: auth)
+                try await env.api.batchSaveTracks(trackIDs: [e.trackID!], auth: env.auth)
             case .playlist:
-                try await api.batchAddTracks(playlistID: e.playlistID!, uris: [e.trackURI!], auth: auth)
+                try await env.api.batchAddTracks(playlistID: e.playlistID!, uris: [e.trackURI!], auth: env.auth)
             }
             await MainActor.run { store.remove(id: e.id) }
             ToastCenter.shared.show("Restored")
@@ -123,8 +122,8 @@ private struct HistoryRow: View {
                     Image(systemName: "arrow.uturn.backward")
                         .font(.title3.weight(.semibold))
                         .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(.white)          // ← white icon
-                        .padding(6)                       // comfy tap area
+                        .foregroundStyle(.white)
+                        .padding(6)
                 }
             }
             .buttonStyle(.plain)
