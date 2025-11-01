@@ -4,7 +4,7 @@ import SwiftUI
 /// High-level Spotify service coordinating client, cache, and auth.
 /// Publishes state for UI binding.
 @MainActor
-final class SpotifyService: ObservableObject {
+final class SpotifyService: ObservableObject {  // ← Add conformance
     
     // MARK: - Published State
     
@@ -16,6 +16,7 @@ final class SpotifyService: ObservableObject {
     private let client: SpotifyClient
     private let cache: TrackMetadataCache
     private let auth: AuthManager
+    private let dataProvider: SpotifyDataProvider
     
     // MARK: - Initialization
     
@@ -23,6 +24,7 @@ final class SpotifyService: ObservableObject {
         self.client = client
         self.cache = cache
         self.auth = auth
+        self.dataProvider = SpotifyDataProvider(client: client, auth: auth)
     }
     
     // MARK: - User / Playlists
@@ -37,7 +39,7 @@ final class SpotifyService: ObservableObject {
         playlists = try await client.fetchPlaylists(token: token)
     }
     
-    // MARK: - Playlist Tracks
+    // MARK: - TrackDataProvider Implementation
     
     func loadAllPlaylistTracksOrdered(
         playlistID: String,
@@ -53,21 +55,6 @@ final class SpotifyService: ObservableObject {
         let (unreviewed, reviewed) = all.partitioned {
             guard let uri = $0.track?.uri else { return false }
             return !reviewedURIs.contains(uri)
-        }
-        
-        return unreviewed.shuffled() + reviewed.shuffled()
-    }
-    
-    // MARK: - Saved Tracks
-    
-    func loadAllSavedTracksOrdered(reviewedIDs: Set<String>) async throws -> [PlaylistTrack] {
-        guard let token = auth.accessToken else { return [] }
-        
-        let all = try await client.fetchAllSavedTracks(token: token)
-        
-        let (unreviewed, reviewed) = all.partitioned {
-            guard let id = $0.track?.id else { return false }
-            return !reviewedIDs.contains(id)
         }
         
         return unreviewed.shuffled() + reviewed.shuffled()

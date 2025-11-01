@@ -13,27 +13,32 @@ final class AuthManager: NSObject, ObservableObject {
             }
         }
     }
-
+    
     // MARK: - Dependencies
     private let client: AuthClient
-
+    
     // MARK: - Private State
     private var currentVerifier: String?
     private var authSession: ASWebAuthenticationSession?
     private var refreshTimer: Timer?
-
-    // MARK: - Init
+    
+    // MARK: - Initialization
+    
     init(client: AuthClient) {
         self.client = client
-        super.init()
     }
-
+    
     // MARK: - Public API
-
+    
     func isLoggedIn() -> Bool {
         accessToken != nil
     }
-
+    
+    /// Get current access token (for non-@MainActor services)
+    nonisolated func getAccessToken() async -> String? {
+        await client.getCurrentAccessToken()
+    }
+    
     /// Restore session on app launch.
     func resumeSession() async {
         do {
@@ -48,13 +53,13 @@ final class AuthManager: NSObject, ObservableObject {
             logout()
         }
     }
-
+    
     /// Start OAuth login flow.
     func login() {
         Task { @MainActor in
             let (url, verifier) = await client.buildAuthorizationURL()
             currentVerifier = verifier
-
+            
             authSession = ASWebAuthenticationSession(
                 url: url,
                 callbackURLScheme: "spotifysort"
@@ -71,21 +76,21 @@ final class AuthManager: NSObject, ObservableObject {
             _ = authSession?.start()
         }
     }
-
+    
     /// Clear session.
     func logout() {
         accessToken = nil
         invalidateRefreshTimer()
         Task { await client.logout() }
     }
-
+    
     // MARK: - Redirect Handling
-
+    
     func handleRedirect(url: URL) {
         guard let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "code" })?.value,
               let verifier = currentVerifier else { return }
-
+        
         Task {
             do {
                 let token = try await client.exchangeCode(code, verifier: verifier)
@@ -97,12 +102,12 @@ final class AuthManager: NSObject, ObservableObject {
             }
         }
     }
-
+    
     // MARK: - Auto-Refresh
-
+    
     private func scheduleAutoRefresh(expiresAt: Date) {
         invalidateRefreshTimer()
-
+        
         let interval = max(10, expiresAt.timeIntervalSinceNow - 60) // refresh 1 min before expiry
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { _ in
             Task { @MainActor [weak self] in
@@ -110,7 +115,7 @@ final class AuthManager: NSObject, ObservableObject {
             }
         }
     }
-
+    
     private func refreshAccessToken() async {
         do {
             let token = try await client.refreshAccessToken()
@@ -121,7 +126,7 @@ final class AuthManager: NSObject, ObservableObject {
             logout()
         }
     }
-
+    
     private func invalidateRefreshTimer() {
         refreshTimer?.invalidate()
         refreshTimer = nil
