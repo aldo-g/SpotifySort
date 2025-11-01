@@ -7,6 +7,7 @@ import Foundation
 final class DeckViewModel: ObservableObject {
     
     // MARK: - Published State
+    // ... (rest of published properties remain unchanged)
     
     @Published var deck: [PlaylistTrack] = []
     @Published var topIndex: Int = 0
@@ -23,6 +24,7 @@ final class DeckViewModel: ObservableObject {
     
     private let service: SpotifyService  // ← Changed from 'api'
     private let auth: AuthManager
+    private let history: HistoryCoordinator // NEW DEPENDENCY
     private let mode: SortMode
     private let dataProvider: any TrackDataProvider
     private let listKey: String
@@ -60,24 +62,25 @@ final class DeckViewModel: ObservableObject {
     
     // MARK: - Initialization
     
-    init(mode: SortMode, service: SpotifyService, auth: AuthManager, dataProvider: any TrackDataProvider) { // <-- MODIFIED
+    init(mode: SortMode, service: SpotifyService, auth: AuthManager, dataProvider: any TrackDataProvider, history: HistoryCoordinator) { // <-- MODIFIED
             self.mode = mode
             self.service = service
             self.auth = auth
-            self.dataProvider = dataProvider // <-- NEW
+            self.dataProvider = dataProvider
+            self.history = history // NEW
             
             switch mode {
             case .liked:
                 self.listKey = "liked"
                 self.likedService = LikedSongsService(
-                    dataProvider: dataProvider, // <-- MODIFIED
+                    dataProvider: dataProvider,
                     sessionSeed: sessionSeed,
                     warmStartTarget: 100
                 )
             case .playlist(let pl):
                 self.listKey = "playlist:\(pl.id)"
                 self.playlistService = PlaylistService(
-                    dataProvider: dataProvider, // <-- MODIFIED
+                    dataProvider: dataProvider,
                     playlistID: pl.id
                 )
             }
@@ -92,6 +95,7 @@ final class DeckViewModel: ObservableObject {
         if service.playlists.isEmpty { try? await service.loadPlaylists() }
         
         // Load reviewed tracks
+        // NOTE: ReviewStore is still a pure actor, loaded directly.
         reviewedSet = await ReviewStore.shared.loadReviewed(for: listKey)
         
         switch mode {
@@ -276,7 +280,7 @@ final class DeckViewModel: ObservableObject {
                 album: track.album.name,
                 artworkURL: track.album.images?.first?.url
             )
-            HistoryStore.shared.add([entry])
+            history.add([entry]) // UPDATED to use coordinator
         } catch {
             print("Unsave failed:", error)
         }
@@ -296,7 +300,7 @@ final class DeckViewModel: ObservableObject {
                 album: track.album.name,
                 artworkURL: track.album.images?.first?.url
             )
-            HistoryStore.shared.add([entry])
+            history.add([entry]) // UPDATED to use coordinator
         } catch {
             print("Remove from playlist failed:", error)
         }

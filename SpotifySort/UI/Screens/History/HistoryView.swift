@@ -3,9 +3,15 @@ import SwiftUI
 struct HistoryView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var env: AppEnvironment
-    @ObservedObject var store = HistoryStore.shared
+    
+    // 1. Accepts HistoryCoordinator via initializer
+    @ObservedObject var history: HistoryCoordinator
 
     @State private var restoring: Set<UUID> = []
+
+    init(history: HistoryCoordinator) {
+        self.history = history
+    }
 
     var body: some View {
         NavigationStack {
@@ -15,7 +21,8 @@ struct HistoryView: View {
                     .ignoresSafeArea()
                     .overlay(BrickOverlay().blendMode(.overlay).opacity(0.35))
 
-                if store.entries.isEmpty {
+                // 2. UPDATED: References history.entries
+                if history.entries.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 44, weight: .semibold))
@@ -30,7 +37,8 @@ struct HistoryView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            ForEach(store.entries) { e in
+                            // 3. UPDATED: Iterates over history.entries
+                            ForEach(history.entries) { e in
                                 HistoryRow(entry: e,
                                            isRestoring: restoring.contains(e.id),
                                            onRevert: { Task { await revert(e) } })
@@ -47,10 +55,12 @@ struct HistoryView: View {
                     Button("Close") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(role: .destructive) { store.clear() } label: {
+                    // 4. UPDATED: Calls history.clear()
+                    Button(role: .destructive) { history.clear() } label: {
                         Label("Clear All", systemImage: "trash")
                     }
-                    .disabled(store.entries.isEmpty)
+                    // 5. UPDATED: References history.entries
+                    .disabled(history.entries.isEmpty)
                 }
             }
             .tint(.white)
@@ -77,7 +87,8 @@ struct HistoryView: View {
             case .playlist:
                 try await env.service.batchAddTracks(playlistID: e.playlistID!, uris: [e.trackURI!])
             }
-            await MainActor.run { store.remove(id: e.id) }
+            // 6. UPDATED: Calls history.remove(id:)
+            history.remove(id: e.id)
             ToastCenter.shared.show("Restored")
         } catch {
             print("Revert failed:", error)

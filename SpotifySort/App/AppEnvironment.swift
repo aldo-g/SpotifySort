@@ -10,6 +10,7 @@ final class AppEnvironment: ObservableObject {
     let router: Router
     let previews: PreviewResolver
     let dataProvider: any TrackDataProvider
+    let history: HistoryCoordinator
     
     private var cancellables = Set<AnyCancellable>()
 
@@ -18,13 +19,15 @@ final class AppEnvironment: ObservableObject {
         service: SpotifyService,
         router: Router,
         previews: PreviewResolver,
-        dataProvider: any TrackDataProvider
+        dataProvider: any TrackDataProvider,
+        history: HistoryCoordinator
     ) {
         self.auth = auth
         self.service = service
         self.router = router
         self.previews = previews
         self.dataProvider = dataProvider
+        self.history = history
         
         auth.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -35,6 +38,10 @@ final class AppEnvironment: ObservableObject {
         }.store(in: &cancellables)
         
         router.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        
+        history.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
         

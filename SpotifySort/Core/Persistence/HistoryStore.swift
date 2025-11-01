@@ -1,82 +1,60 @@
-import Foundation
-import SwiftUI
-import Combine
+// SpotifySort/Core/Persistence/HistoryStore.swift
 
-/// UI-facing history store with published state and background persistence.
-@MainActor
-final class HistoryStore: ObservableObject {
+import Foundation
+import Combine // Still need Combine for Task.detached compatibility, but removed published
+
+/// Thread-safe actor managing history entries via background persistence.
+/// This is a pure Core component with no knowledge of UI/UIApplication.
+actor HistoryStore {
+    
+    // Static shared instance is acceptable for a Core singleton managed by AppEnvironment
     static let shared = HistoryStore()
     
-    @Published private(set) var entries: [RemovalEntry] = []
-    
+    private var internalEntries: [RemovalEntry] = [] // Internal state is not @Published
     private let persister = HistoryPersister()
     private let maxEntries = 500
-    private var backgroundTaskID: UIBackgroundTaskIdentifier?
     
     private init() {
-        Task {
-            entries = await persister.load()
-        }
-        setupBackgroundNotifications()
+        // Init logic moved to load()
     }
     
-    func add(_ newEntries: [RemovalEntry]) {
+    // MARK: - Public Actor API (async/await access only)
+    
+    func load() async {
+        internalEntries = await persister.load()
+    }
+    
+    func getEntries() async -> [RemovalEntry] {
+        internalEntries
+    }
+    
+    func add(_ newEntries: [RemovalEntry]) async {
         guard !newEntries.isEmpty else { return }
-        var merged = newEntries + entries
+        var merged = newEntries + internalEntries
         if merged.count > maxEntries {
             merged = Array(merged.prefix(maxEntries))
         }
-        entries = merged
-        Task { await persister.scheduleWrite(entries) }
+        internalEntries = merged
+        await persister.scheduleWrite(internalEntries)
     }
     
-    func clear() {
-        entries.removeAll()
-        Task { await persister.flush() }
+    func clear() async {
+        internalEntries.removeAll()
+        await persister.flush()
     }
     
-    func remove(id: UUID) {
-        entries.removeAll { $0.id == id }
-        Task { await persister.scheduleWrite(entries) }
+    func remove(id: UUID) async {
+        internalEntries.removeAll { $0.id == id }
+        await persister.scheduleWrite(internalEntries)
     }
     
-    func removeBatch(ids: [UUID]) {
+    func removeBatch(ids: [UUID]) async {
         let set = Set(ids)
-        entries.removeAll { set.contains($0.id) }
-        Task { await persister.scheduleWrite(entries) }
+        internalEntries.removeAll { set.contains($0.id) }
+        await persister.scheduleWrite(internalEntries)
     }
     
-    // MARK: - Background Safety
-    
-    private func setupBackgroundNotifications() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appWillResignActive),
-            name: UIApplication.willResignActiveNotification,
-            object: nil
-        )
-    }
-    
-    @objc private func appWillResignActive() {
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
-            self?.endBackgroundTask()
-        }
-        
-        Task { [weak self] in
-            guard let self else { return }
-            await self.persister.flush()
-            await MainActor.run { self.endBackgroundTask() }
-        }
-    }
-    
-    private func endBackgroundTask() {
-        if let taskID = backgroundTaskID {
-            UIApplication.shared.endBackgroundTask(taskID)
-            backgroundTaskID = .invalid
-        }
-    }
-    
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+    func flush() async {
+        await persister.flush()
     }
 }

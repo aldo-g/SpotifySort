@@ -25,7 +25,8 @@ struct SortScreen: View {
                     mode: mode,
                     service: env.service,
                     auth: env.auth,
-                    dataProvider: dataProvider // <-- MODIFIED
+                    dataProvider: dataProvider, // <-- MODIFIED
+                    history: env.history // NEW: Pass the HistoryCoordinator dependency
                 )
             )
         }
@@ -85,7 +86,7 @@ struct SortScreen: View {
         }
         
         // Sheets & overlays
-        .sheet(isPresented: $showHistory) { HistoryView() }
+        .sheet(isPresented: $showHistory) { HistoryView(history: env.history) } // UPDATED: Pass coordinator
         .overlay(appMenuOverlay, alignment: .topLeading)
         
         // Load data when view appears

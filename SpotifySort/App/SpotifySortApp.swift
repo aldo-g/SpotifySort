@@ -10,19 +10,21 @@ struct SpotifySortApp: App {
         let authClient = AuthClient(config: .spotifyDefault, store: secure)
         let auth = AuthManager(client: authClient)
         
-        // Build Spotify dependencies (three-layer architecture)
+        // Build Core dependencies
         let spotifyClient = SpotifyClient()
         let metadataCache = TrackMetadataCache()
+        let spotifyDataProvider = SpotifyDataProvider(client: spotifyClient, auth: auth)
+        let historyStore = HistoryStore.shared // Get the pure Core actor
+        
+        // Build App Services (coordinators)
         let spotifyService = SpotifyService(
             client: spotifyClient,
             cache: metadataCache,
             auth: auth
         )
-        let spotifyDataProvider = SpotifyDataProvider(client: spotifyClient, auth: auth)
-        
-        // Other singletons
         let router = Router()
         let previews = PreviewResolver(service: spotifyService, cache: metadataCache)
+        let historyCoordinator = HistoryCoordinator(store: historyStore) // NEW: Coordinator wraps Core actor
         
         // Compose environment
         let env = AppEnvironment(
@@ -30,7 +32,8 @@ struct SpotifySortApp: App {
             service: spotifyService,
             router: router,
             previews: previews,
-            dataProvider: spotifyDataProvider
+            dataProvider: spotifyDataProvider,
+            history: historyCoordinator // ADDED
         )
         
         _env = StateObject(wrappedValue: env)
