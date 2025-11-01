@@ -92,7 +92,7 @@ final class DeckViewModel: ObservableObject {
         if service.playlists.isEmpty { try? await service.loadPlaylists() }
         
         // Load reviewed tracks
-        reviewedSet = ReviewStore.shared.loadReviewed(for: listKey)
+        reviewedSet = await ReviewStore.shared.loadReviewed(for: listKey)
         
         switch mode {
         case .liked:
@@ -114,10 +114,10 @@ final class DeckViewModel: ObservableObject {
         
         // Mark as reviewed
         if let id = item.track?.id {
-            ReviewStore.shared.addReviewed(id, for: listKey)
+            await ReviewStore.shared.addReviewed(id, for: listKey)
             reviewedSet.insert(id)
         } else if let uri = item.track?.uri {
-            ReviewStore.shared.addReviewed(uri, for: listKey)
+            await ReviewStore.shared.addReviewed(uri, for: listKey)
             reviewedSet.insert(uri)
         }
         

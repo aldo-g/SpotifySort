@@ -1,57 +1,40 @@
-import Foundation
-import UIKit
+// SpotifySort/Core/Persistence/ReviewStore.swift
 
-/// UI-facing review store with background persistence.
-final class ReviewStore {
+import Foundation
+// import UIKit <-- Removed since no UI/App logic remains
+
+/// Thread-safe actor managing reviewed track IDs via background persistence.
+actor ReviewStore {
     static let shared = ReviewStore()
     
     private let persister = ReviewPersister()
     
-    private init() {
-        setupBackgroundNotifications()
+    // Private init to enforce singleton pattern on the actor
+    private init() {}
+    
+    // All access must now be asynchronous (await)
+    func loadReviewed(for listKey: String) async -> Set<String> {
+        // Delegates synchronous UserDefaults access to the persister actor
+        await persister.load(for: listKey)
     }
     
-    func loadReviewed(for listKey: String) -> Set<String> {
-        let key = "reviewed.\(listKey)"
-        let arr = UserDefaults.standard.array(forKey: key) as? [String] ?? []
-        return Set(arr)
-    }
-    
-    func addReviewed(_ id: String, for listKey: String) {
-        var set = loadReviewed(for: listKey)
+    func addReviewed(_ id: String, for listKey: String) async {
+        // Awaits load, mutates state, then schedules the write
+        var set = await loadReviewed(for: listKey)
         guard set.insert(id).inserted else { return }
-        
-        // Capture immutable copy for Task
-        let updatedSet = set
-        Task { await persister.scheduleWrite(updatedSet, for: listKey) }
+        await persister.scheduleWrite(set, for: listKey)
     }
     
-    func addReviewedBatch(_ ids: [String], for listKey: String) {
+    func addReviewedBatch(_ ids: [String], for listKey: String) async {
         guard !ids.isEmpty else { return }
-        var set = loadReviewed(for: listKey)
+        var set = await loadReviewed(for: listKey)
         for id in ids { set.insert(id) }
-        
-        // Capture immutable copy for Task
-        let updatedSet = set
-        Task { await persister.scheduleWrite(updatedSet, for: listKey) }
+        await persister.scheduleWrite(set, for: listKey)
     }
     
-    // MARK: - Background Safety
-    
-    private func setupBackgroundNotifications() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appWillResignActive),
-            name: UIApplication.willResignActiveNotification,
-            object: nil
-        )
+    func flush() async {
+        await persister.flush()
     }
     
-    @objc private func appWillResignActive() {
-        Task { await persister.flush() }
-    }
-    
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+    // Removed all UIApplication/NotificationCenter setup (this is a Core concern)
 }
