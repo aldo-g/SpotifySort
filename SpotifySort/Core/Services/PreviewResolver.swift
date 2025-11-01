@@ -1,10 +1,12 @@
+// SpotifySort/Core/Services/PreviewResolver.swift
+
 import Foundation
 import Combine
 
 /// Centralizes preview-URL resolution + waveform caching for a Track.
 /// UI should not talk to Deezer/Spotify caches directly.
-@MainActor
-final class PreviewResolver: ObservableObject {
+// MODIFIED: Changed to an actor, removed @MainActor and ObservableObject
+actor PreviewResolver {
     private let service: SpotifyService
     private let cache: TrackMetadataCache
 
@@ -14,12 +16,13 @@ final class PreviewResolver: ObservableObject {
     }
 
     /// Stable key for preview/waveform caches.
-    func key(for track: Track) -> String {
+    // ADDED: nonisolated to allow calling from anywhere synchronously
+    nonisolated func key(for track: Track) -> String {
         track.id ?? track.uri ?? "\(track.name)|\(track.artists.first?.name ?? "")"
     }
 
     /// Resolve a playable preview URL and (optionally) a precomputed waveform.
-    /// Returns (url, waveform) where waveform may be nil if not yet ready.
+    /// The actor enforces thread safety on all internal data and async calls.
     func resolve(for track: Track) async -> (String?, [Float]?) {
         let k = key(for: track)
 

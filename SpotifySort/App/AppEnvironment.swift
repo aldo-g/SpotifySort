@@ -38,9 +38,5 @@ final class AppEnvironment: ObservableObject {
             self?.objectWillChange.send()
         }.store(in: &cancellables)
         
-        previews.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }.store(in: &cancellables)
-        
     }
 }
