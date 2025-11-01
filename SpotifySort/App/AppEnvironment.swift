@@ -6,27 +6,26 @@ import Combine
 @MainActor
 final class AppEnvironment: ObservableObject {
     let auth: AuthManager
-    let service: SpotifyService  // ← Changed from 'api'
+    let service: SpotifyService
     let router: Router
     let previews: PreviewResolver
-    let metadata: TrackMetadataService
+    let dataProvider: any TrackDataProvider
     
     private var cancellables = Set<AnyCancellable>()
 
     init(
         auth: AuthManager,
-        service: SpotifyService,  // ← Changed from 'api'
+        service: SpotifyService,
         router: Router,
         previews: PreviewResolver,
-        metadata: TrackMetadataService
+        dataProvider: any TrackDataProvider
     ) {
         self.auth = auth
         self.service = service
         self.router = router
         self.previews = previews
-        self.metadata = metadata
+        self.dataProvider = dataProvider
         
-        // Forward objectWillChange from all children
         auth.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
@@ -43,8 +42,5 @@ final class AppEnvironment: ObservableObject {
             self?.objectWillChange.send()
         }.store(in: &cancellables)
         
-        metadata.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }.store(in: &cancellables)
     }
 }

@@ -10,19 +10,16 @@ actor PlaylistService {
     private var duplicateIDs: Set<String> = []
     private var isLoaded = false
     
-    private let service: SpotifyService  // ← Changed from 'api'
-    private let auth: AuthManager
+    private let dataProvider: any TrackDataProvider
     private let playlistID: String
     
     // MARK: - Initialization
     
     init(
-        service: SpotifyService,
-        auth: AuthManager,
+        dataProvider: any TrackDataProvider,
         playlistID: String
     ) {
-        self.service = service
-        self.auth = auth
+        self.dataProvider = dataProvider
         self.playlistID = playlistID
     }
     
@@ -34,10 +31,10 @@ actor PlaylistService {
         guard !isLoaded else { return }
         
         // Load all tracks from service
-        orderedAll = try await service.loadAllPlaylistTracksOrdered(
-            playlistID: playlistID,
-            reviewedURIs: reviewedURIs
-        )
+        orderedAll = try await dataProvider.loadAllPlaylistTracksOrdered( // <-- MODIFIED
+                    playlistID: playlistID,
+                    reviewedURIs: reviewedURIs
+                )
         
         // Detect duplicates in background (off main thread)
         duplicateIDs = await DuplicateDetector.detect(orderedAll)

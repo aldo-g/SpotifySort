@@ -18,12 +18,17 @@ struct SortScreen: View {
     
     // MARK: - Initialization
     // We keep the api/auth parameters for call-site compatibility. The VM will use them.
-    init(mode: SortMode, env: AppEnvironment) {
-        self.mode = mode
-        _viewModel = StateObject(
-            wrappedValue: DeckViewModel(mode: mode, service: env.service, auth: env.auth)
-        )
-    }
+    init(mode: SortMode, env: AppEnvironment, dataProvider: any TrackDataProvider) { // <-- MODIFIED
+            self.mode = mode
+            _viewModel = StateObject(
+                wrappedValue: DeckViewModel(
+                    mode: mode,
+                    service: env.service,
+                    auth: env.auth,
+                    dataProvider: dataProvider // <-- MODIFIED
+                )
+            )
+        }
 
     // MARK: - Computed
     
@@ -90,9 +95,22 @@ struct SortScreen: View {
         
         // Prefetch track metadata (popularity + genres) whenever the visible deck changes
         .task(id: deckSignature) {
-            let visibleTracks = viewModel.deck.compactMap { $0.track }
-            await env.metadata.prefetch(for: visibleTracks, service: env.service)
-        }
+                    let visibleTracks = viewModel.deck.compactMap { $0.track }
+                    guard !visibleTracks.isEmpty else { return }
+
+                    // 1. Get IDs for prefetching
+                    let trackIDs: [String] = visibleTracks.compactMap { $0.id }
+                    let artistIDs: [String] = visibleTracks.compactMap { $0.artists.first?.id }
+                    
+                    // 2. Call the Core Service methods directly
+                    if !trackIDs.isEmpty {
+                        await env.service.ensureTrackPopularity(for: trackIDs)
+                    }
+
+                    if !artistIDs.isEmpty {
+                        await env.service.ensureArtistGenres(for: artistIDs)
+                    }
+                }
     }
     
     // MARK: - Subviews

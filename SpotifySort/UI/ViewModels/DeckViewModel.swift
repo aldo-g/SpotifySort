@@ -24,6 +24,7 @@ final class DeckViewModel: ObservableObject {
     private let service: SpotifyService  // ← Changed from 'api'
     private let auth: AuthManager
     private let mode: SortMode
+    private let dataProvider: any TrackDataProvider
     private let listKey: String
     
     // MARK: - Services
@@ -59,29 +60,28 @@ final class DeckViewModel: ObservableObject {
     
     // MARK: - Initialization
     
-    init(mode: SortMode, service: SpotifyService, auth: AuthManager) {
-        self.mode = mode
-        self.service = service
-        self.auth = auth
-        
-        switch mode {
-        case .liked:
-            self.listKey = "liked"
-            self.likedService = LikedSongsService(
-                service: service,
-                auth: auth,
-                sessionSeed: sessionSeed,
-                warmStartTarget: 100
-            )
-        case .playlist(let pl):
-            self.listKey = "playlist:\(pl.id)"
-            self.playlistService = PlaylistService(
-                service: service,
-                auth: auth,
-                playlistID: pl.id
-            )
+    init(mode: SortMode, service: SpotifyService, auth: AuthManager, dataProvider: any TrackDataProvider) { // <-- MODIFIED
+            self.mode = mode
+            self.service = service
+            self.auth = auth
+            self.dataProvider = dataProvider // <-- NEW
+            
+            switch mode {
+            case .liked:
+                self.listKey = "liked"
+                self.likedService = LikedSongsService(
+                    dataProvider: dataProvider, // <-- MODIFIED
+                    sessionSeed: sessionSeed,
+                    warmStartTarget: 100
+                )
+            case .playlist(let pl):
+                self.listKey = "playlist:\(pl.id)"
+                self.playlistService = PlaylistService(
+                    dataProvider: dataProvider, // <-- MODIFIED
+                    playlistID: pl.id
+                )
+            }
         }
-    }
     
     // MARK: - Public API
     

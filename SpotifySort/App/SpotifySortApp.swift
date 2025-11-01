@@ -18,11 +18,11 @@ struct SpotifySortApp: App {
             cache: metadataCache,
             auth: auth
         )
+        let spotifyDataProvider = SpotifyDataProvider(client: spotifyClient, auth: auth)
         
         // Other singletons
         let router = Router()
         let previews = PreviewResolver(service: spotifyService, cache: metadataCache)
-        let metadata = TrackMetadataService()
         
         // Compose environment
         let env = AppEnvironment(
@@ -30,7 +30,7 @@ struct SpotifySortApp: App {
             service: spotifyService,
             router: router,
             previews: previews,
-            metadata: metadata
+            dataProvider: spotifyDataProvider
         )
         
         _env = StateObject(wrappedValue: env)

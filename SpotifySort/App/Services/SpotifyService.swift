@@ -16,7 +16,6 @@ final class SpotifyService: ObservableObject {
     private let client: SpotifyClient
     private let cache: TrackMetadataCache
     private let auth: AuthManager
-    private let dataProvider: SpotifyDataProvider
     
     // MARK: - Initialization
     
@@ -24,7 +23,6 @@ final class SpotifyService: ObservableObject {
         self.client = client
         self.cache = cache
         self.auth = auth
-        self.dataProvider = SpotifyDataProvider(client: client, auth: auth)
     }
     
     // MARK: - User / Playlists
@@ -37,32 +35,6 @@ final class SpotifyService: ObservableObject {
     func loadPlaylists() async throws {
         guard let token = auth.accessToken else { return }
         playlists = try await client.fetchPlaylists(token: token)
-    }
-    
-    // MARK: - TrackDataProvider Implementation
-    
-    func loadAllPlaylistTracksOrdered(
-        playlistID: String,
-        reviewedURIs: Set<String>
-    ) async throws -> [PlaylistTrack] {
-        guard let token = auth.accessToken else { return [] }
-        
-        let all = try await client.fetchAllPlaylistTracks(
-            playlistID: playlistID,
-            token: token
-        )
-        
-        let (unreviewed, reviewed) = all.partitioned {
-            guard let uri = $0.track?.uri else { return false }
-            return !reviewedURIs.contains(uri)
-        }
-        
-        return unreviewed.shuffled() + reviewed.shuffled()
-    }
-    
-    func fetchSavedTracksPage(nextURL: String? = nil) async throws -> (items: [PlaylistTrack], next: String?) {
-        guard let token = auth.accessToken else { return ([], nil) }
-        return try await client.fetchSavedTracksPage(token: token, nextURL: nextURL)
     }
     
     // MARK: - Mutations
@@ -139,18 +111,7 @@ final class SpotifyService: ObservableObject {
     }
 }
 
-// MARK: - Helpers
-
 private extension Array {
-    func partitioned(_ isFirst: (Element) -> Bool) -> ([Element], [Element]) {
-        var first: [Element] = []
-        var second: [Element] = []
-        for el in self {
-            if isFirst(el) { first.append(el) } else { second.append(el) }
-        }
-        return (first, second)
-    }
-    
     // Helper for async filtering
     func asyncFilter(_ isIncluded: (Element) async -> Bool) async -> [Element] {
         var result: [Element] = []
