@@ -30,17 +30,17 @@ final class PreviewResolver: ObservableObject {
         }
 
         // 2) Check cache
-        if let cached = cache.getPreviewURL(key: k),
+        if let cached = await cache.getPreviewURL(key: k),
            let ok = await DeezerPreviewService.shared.validatePreview(urlString: cached, trackKey: k, track: track) {
-            cache.setPreviewURL(key: k, url: ok)
+            await cache.setPreviewURL(key: k, url: ok)
             let wf = await WaveformStore.shared.waveform(for: k, previewURL: ok)
             return (ok, wf)
         }
 
         // 3) Fresh Deezer lookup.
         if let deezer = await DeezerPreviewService.shared.resolvePreview(for: track) {
-            cache.setPreviewURL(key: k, url: deezer)
-            cache.save()
+            await cache.setPreviewURL(key: k, url: deezer)
+            await cache.save()
             let wf = await WaveformStore.shared.waveform(for: k, previewURL: deezer)
             return (deezer, wf)
         }

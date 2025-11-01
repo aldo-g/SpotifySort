@@ -3,14 +3,14 @@ import AVFoundation
 
 /// Computes & caches downsampled waveforms (0...1) for 30s previews.
 /// Keyed by a stable per-track key (track.id / uri / name|artist).
-@MainActor
-final class WaveformStore: ObservableObject {
+/// Actor-isolated for off-main-thread computation and I/O.
+actor WaveformStore {
     static let shared = WaveformStore()
 
-    @Published private(set) var cache: [String: [Float]] = [:]
+    private var cache: [String: [Float]] = [:]
 
-    private let diskKey = "waveforms.cache.v1"        // key -> base64(Float[])
-    private let samplesPerWave = 180                  // visual columns across the strip
+    private let diskKey = "waveforms.cache.v1"
+    private let samplesPerWave = 180
 
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
@@ -19,7 +19,22 @@ final class WaveformStore: ObservableObject {
         return URLSession(configuration: c)
     }()
 
-    private init() { loadFromDisk() }
+    private init() {
+        // Load synchronously during init (safe because actor not yet shared)
+        if let blob = UserDefaults.standard.dictionary(forKey: diskKey) as? [String: String] {
+            var restored: [String: [Float]] = [:]
+            for (k, b64) in blob {
+                if let data = Data(base64Encoded: b64) {
+                    let count = data.count / MemoryLayout<Float>.size
+                    let arr = data.withUnsafeBytes { ptr in
+                        Array(ptr.bindMemory(to: Float.self).prefix(count))
+                    }
+                    restored[k] = arr
+                }
+            }
+            cache = restored
+        }
+    }
 
     /// Returns cached waveform or computes+persists it.
     func waveform(for key: String, previewURL: String) async -> [Float]? {
@@ -44,7 +59,7 @@ final class WaveformStore: ObservableObject {
         }
     }
 
-    // MARK: - Computation (non-actor)
+    // MARK: - Computation (nonisolated - runs on any thread)
 
     private static func computeWaveform(fileURL: URL, samples: Int) async throws -> [Float] {
         let file = try AVAudioFile(forReading: fileURL)
@@ -99,20 +114,5 @@ final class WaveformStore: ObservableObject {
             blob[k] = data.base64EncodedString()
         }
         UserDefaults.standard.set(blob, forKey: diskKey)
-    }
-
-    private func loadFromDisk() {
-        guard let blob = UserDefaults.standard.dictionary(forKey: diskKey) as? [String: String] else { return }
-        var restored: [String: [Float]] = [:]
-        for (k, b64) in blob {
-            if let data = Data(base64Encoded: b64) {
-                let count = data.count / MemoryLayout<Float>.size
-                let arr = data.withUnsafeBytes { ptr in
-                    Array(ptr.bindMemory(to: Float.self).prefix(count))
-                }
-                restored[k] = arr
-            }
-        }
-        cache = restored
     }
 }

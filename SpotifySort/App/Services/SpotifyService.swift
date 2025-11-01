@@ -4,7 +4,7 @@ import SwiftUI
 /// High-level Spotify service coordinating client, cache, and auth.
 /// Publishes state for UI binding.
 @MainActor
-final class SpotifyService: ObservableObject {  // ← Add conformance
+final class SpotifyService: ObservableObject {
     
     // MARK: - Published State
     
@@ -92,13 +92,13 @@ final class SpotifyService: ObservableObject {  // ← Add conformance
     func ensureArtistGenres(for artistIDs: [String]) async {
         guard let token = auth.accessToken else { return }
         
-        let missing = artistIDs.filter { !cache.hasArtistGenres(id: $0) }
+        let missing = await artistIDs.asyncFilter { !(await cache.hasArtistGenres(id: $0)) }
         guard !missing.isEmpty else { return }
         
         do {
             let fetched = try await client.fetchArtistGenres(artistIDs: missing, token: token)
-            cache.setArtistGenresBatch(fetched)
-            cache.save()
+            await cache.setArtistGenresBatch(fetched)
+            await cache.save()
         } catch {
             // Fail silently for metadata
         }
@@ -107,13 +107,13 @@ final class SpotifyService: ObservableObject {  // ← Add conformance
     func ensureTrackPopularity(for trackIDs: [String]) async {
         guard let token = auth.accessToken else { return }
         
-        let missing = trackIDs.filter { !cache.hasTrackPopularity(id: $0) }
+        let missing = await trackIDs.asyncFilter { !(await cache.hasTrackPopularity(id: $0)) }
         guard !missing.isEmpty else { return }
         
         do {
             let fetched = try await client.fetchTrackPopularity(trackIDs: missing, token: token)
-            cache.setTrackPopularityBatch(fetched)
-            cache.save()
+            await cache.setTrackPopularityBatch(fetched)
+            await cache.save()
         } catch {
             // Fail silently for metadata
         }
@@ -121,21 +121,21 @@ final class SpotifyService: ObservableObject {  // ← Add conformance
     
     // MARK: - Cache Access (for UI)
     
-    func getArtistGenres(id: String) -> [String]? {
-        cache.getArtistGenres(id: id)
+    func getArtistGenres(id: String) async -> [String]? {
+        await cache.getArtistGenres(id: id)
     }
     
-    func getTrackPopularity(id: String) -> Int? {
-        cache.getTrackPopularity(id: id)
+    func getTrackPopularity(id: String) async -> Int? {
+        await cache.getTrackPopularity(id: id)
     }
     
-    func getPreviewURL(key: String) -> String? {
-        cache.getPreviewURL(key: key)
+    func getPreviewURL(key: String) async -> String? {
+        await cache.getPreviewURL(key: key)
     }
     
-    func setPreviewURL(key: String, url: String) {
-        cache.setPreviewURL(key: key, url: url)
-        cache.save()
+    func setPreviewURL(key: String, url: String) async {
+        await cache.setPreviewURL(key: key, url: url)
+        await cache.save()
     }
 }
 
@@ -149,5 +149,16 @@ private extension Array {
             if isFirst(el) { first.append(el) } else { second.append(el) }
         }
         return (first, second)
+    }
+    
+    // Helper for async filtering
+    func asyncFilter(_ isIncluded: (Element) async -> Bool) async -> [Element] {
+        var result: [Element] = []
+        for element in self {
+            if await isIncluded(element) {
+                result.append(element)
+            }
+        }
+        return result
     }
 }

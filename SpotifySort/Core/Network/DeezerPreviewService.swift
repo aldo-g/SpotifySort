@@ -2,7 +2,8 @@ import Foundation
 
 /// Looks up 30s MP3 previews from Deezer for tracks where Spotify has no preview.
 /// Validates cached URLs (HEAD) to avoid 403/404/hostname issues.
-final class DeezerPreviewService {
+/// Actor-isolated for thread-safe concurrent access and background execution.
+actor DeezerPreviewService {
     static let shared = DeezerPreviewService()
 
     private lazy var session: URLSession = {
@@ -19,10 +20,12 @@ final class DeezerPreviewService {
     }()
 
     private let cache = NSCache<NSString, NSString>()
-    private let defaultsKey = "deezer.preview.cache" // id/uri -> previewURL
-    private lazy var persisted: [String: String] = {
-        (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String]) ?? [:]
-    }()
+    private let defaultsKey = "deezer.preview.cache"
+    private var persisted: [String: String] = [:]
+
+    private init() {
+        persisted = (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String]) ?? [:]
+    }
 
     // MARK: - Public API
 

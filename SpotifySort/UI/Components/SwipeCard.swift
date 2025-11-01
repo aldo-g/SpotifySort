@@ -51,22 +51,15 @@ struct SwipeCard: View {
     @State private var isResolvingPreview = false
     @State private var isPlaying = false
     @State private var waveform: [Float]? = nil
+    
+    // Metadata (now loaded asynchronously)
+    @State private var popularity: Int?
+    @State private var genreChips: [String] = []
+    
     @ObservedObject private var player = PreviewPlayer.shared
 
-    // Cached
-    private var popularity: Int? {
-        if let id = track.id, let cached = env.service.getTrackPopularity(id: id) { return cached }
-        return track.popularity
-    }
-
     private var primaryArtistID: String? { track.artists.first?.id }
-
-    private var genreChips: [String] {
-        guard let aid = primaryArtistID,
-              let genres = env.service.getArtistGenres(id: aid), !genres.isEmpty else { return [] }
-        return Array(genres.prefix(3))
-    }
-
+    
     private let reservedPlayerHeight: CGFloat = 44
     private let cardCornerRadius: CGFloat = 18
     private let notchRadius: CGFloat = 26
@@ -190,6 +183,20 @@ struct SwipeCard: View {
                 }
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: offset)
+        // Load metadata asynchronously
+        .task(id: track.id) {
+            // Load cached metadata
+            if let id = track.id {
+                popularity = await env.service.getTrackPopularity(id: id) ?? track.popularity
+            } else {
+                popularity = track.popularity
+            }
+            
+            if let aid = primaryArtistID,
+               let genres = await env.service.getArtistGenres(id: aid), !genres.isEmpty {
+                genreChips = Array(genres.prefix(3))
+            }
+        }
         .task(id: track.id ?? track.uri ?? track.name) { await resolvePreview() }
         .onDisappear { stopPlayback() }
     }

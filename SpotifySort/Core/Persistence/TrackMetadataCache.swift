@@ -2,7 +2,8 @@ import Foundation
 
 /// In-memory cache for track metadata with disk persistence.
 /// Stores artist genres, track popularity, and preview URLs.
-final class TrackMetadataCache {
+/// Actor-isolated for thread-safe concurrent access.
+actor TrackMetadataCache {
     
     private var artistGenres: [String: [String]] = [:]
     private var trackPopularity: [String: Int] = [:]
@@ -11,7 +12,18 @@ final class TrackMetadataCache {
     private let diskKey = "trackMetadataCache.v1"
     
     init() {
-        load()
+        // Load synchronously during init (safe because actor not yet shared)
+        guard let data = UserDefaults.standard.dictionary(forKey: diskKey) else { return }
+        
+        if let genres = data["artistGenres"] as? [String: [String]] {
+            artistGenres = genres
+        }
+        if let popularity = data["trackPopularity"] as? [String: Int] {
+            trackPopularity = popularity
+        }
+        if let previews = data["previewMap"] as? [String: String] {
+            previewMap = previews
+        }
     }
     
     // MARK: - Artist Genres
@@ -77,20 +89,6 @@ final class TrackMetadataCache {
             "previewMap": previewMap
         ]
         UserDefaults.standard.set(data, forKey: diskKey)
-    }
-    
-    private func load() {
-        guard let data = UserDefaults.standard.dictionary(forKey: diskKey) else { return }
-        
-        if let genres = data["artistGenres"] as? [String: [String]] {
-            artistGenres = genres
-        }
-        if let popularity = data["trackPopularity"] as? [String: Int] {
-            trackPopularity = popularity
-        }
-        if let previews = data["previewMap"] as? [String: String] {
-            previewMap = previews
-        }
     }
     
     func clear() {
